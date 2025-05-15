@@ -52,7 +52,6 @@ TIME_RANGE_FILTER = {
 }
 
 # Case attribute settings
-CASE_ATTRIBUTES_TO_CHECK = ["Item Category", "concept:name"] # for some reason: do not include "case:" in the name
 CATEGORY_ATTRIBUTE = "Item Category" # for some reason: do not include "case:" in the name
 CASE_ID_ATTRIBUTE = "concept:name"
 
@@ -129,10 +128,24 @@ def process_xes_file(input_file, output_dir, analyze_only=False):
         # Track grouped case IDs
         grouped_case_ids = set()
 
+        for case in filtered_log:
+            # Check if the case has the category attribute
+            if CATEGORY_ATTRIBUTE not in case.attributes:
+                logger.warning(f"Case {case.attributes[CASE_ID_ATTRIBUTE]} does not have the category attribute")
+                continue
+            
+            # Check if the case's category is in any of the groups
+            for group_name, category_values in item_categories.items():
+                if case.attributes[CATEGORY_ATTRIBUTE] in category_values:
+                    grouped_case_ids.add(case.attributes[CASE_ID_ATTRIBUTE])
+                    break
+
         # Step 4: Process each group one by one
         for group_name, category_values in item_categories.items():
             logger.info(f"Processing group: {group_name}")
-            
+
+            group = None
+
             # Filter the log for this group
             try:
                 # Use case filtering since category is a case attribute
@@ -140,7 +153,8 @@ def process_xes_file(input_file, output_dir, analyze_only=False):
                     filtered_log,
                     CATEGORY_ATTRIBUTE, 
                     category_values, 
-                    retain=True
+                    retain=True,
+                    case_id_key=CASE_ID_ATTRIBUTE
                 )
                 
                 # Report stats
@@ -158,10 +172,12 @@ def process_xes_file(input_file, output_dir, analyze_only=False):
                         grouped_case_ids.add(case.attributes[CASE_ID_ATTRIBUTE])
             except Exception as e:
                 logger.error(f"Error processing group {group_name}: {str(e)}")
+                logger.error(traceback.format_exc())
             finally:
                 # Clear the group to free memory
-                del group
-                gc.collect()
+                if group is not None:
+                    del group
+                    gc.collect()
         
         # Step 5: Process "other" cases (those not in any group)
         logger.info("Processing 'other' cases (not matching any category)")

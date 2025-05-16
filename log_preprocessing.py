@@ -103,7 +103,7 @@ def process_xes_file(input_file, output_dir, analyze_only=False):
         
         # Further filter for cases within specified time range in order to scope the timeframe
         filtered_log = pm4py.filter_time_range(
-            filtered_log,
+            log,
             TIME_RANGE_FILTER["start_date"],
             TIME_RANGE_FILTER["end_date"],
             mode=TIME_RANGE_FILTER["mode"],
@@ -112,7 +112,7 @@ def process_xes_file(input_file, output_dir, analyze_only=False):
         )
 
         # Filter for cases that start with the specified activity since we are interested in those that actually start with the activity
-        filtered_log = pm4py.filter_start_activities(log, START_ACTIVITY_FILTER, retain=True)
+        filtered_log = pm4py.filter_start_activities(filtered_log, START_ACTIVITY_FILTER, retain=True)
 
         # filter for cases that also end with the specified activity currently not used
         # filtered_log = pm4py.filter_end_activities(filtered_log, END_ACTIVITY_FILTER, retain=True)

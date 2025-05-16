@@ -24,6 +24,7 @@ import json
 import pm4py
 from pm4py.objects.log.obj import EventLog
 from analyze_logs import count_events
+from pm4py.objects.log.importer.xes import importer as xes_importer
 
 # ---------------------------
 # CONFIGURATION SETTINGS
@@ -90,7 +91,7 @@ def process_xes_file(input_file, output_dir, analyze_only=False):
     logger.info(f"Importing XES file: {input_file}")
     try:
         # Import the log
-        log = pm4py.read_xes(input_file)
+        log = xes_importer.apply(input_file)
         
         case_count = len(log)
         event_count = count_events(log)
@@ -127,18 +128,6 @@ def process_xes_file(input_file, output_dir, analyze_only=False):
 
         # Track grouped case IDs
         grouped_case_ids = set()
-
-        for case in filtered_log:
-            # Check if the case has the category attribute
-            if CATEGORY_ATTRIBUTE not in case.attributes:
-                logger.warning(f"Case {case.attributes[CASE_ID_ATTRIBUTE]} does not have the category attribute")
-                continue
-            
-            # Check if the case's category is in any of the groups
-            for group_name, category_values in item_categories.items():
-                if case.attributes[CATEGORY_ATTRIBUTE] in category_values:
-                    grouped_case_ids.add(case.attributes[CASE_ID_ATTRIBUTE])
-                    break
 
         # Step 4: Process each group one by one
         for group_name, category_values in item_categories.items():

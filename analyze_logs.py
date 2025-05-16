@@ -21,10 +21,7 @@ logger = logging.getLogger(__name__)
 
 def count_events(log):
     """Count events in a log in a memory-efficient way"""
-    count = 0
-    for case in log:
-        count += len(case)
-    return count
+    return sum(len(case) for case in log)
 
 def analyze_log_attributes(log):
     """Analyze all attributes in the log (event-level and case-level)"""

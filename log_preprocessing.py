@@ -32,7 +32,7 @@ from pm4py.objects.log.importer.xes import importer as xes_importer
 
 # Input/Output settings
 INPUT_FILE = './data/BPI_Challenge_2019.xes'
-OUTPUT_DIR = './data'
+OUTPUT_DIR = './data/filtered'
 ANALYZE_ONLY = False
 DEBUG_MODE = False
 

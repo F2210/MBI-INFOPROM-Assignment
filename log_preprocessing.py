@@ -44,6 +44,7 @@ XES_IMPORT_PARAMS = {
 
 # Filter settings
 START_ACTIVITY_FILTER = ["Create Purchase Order Item"]
+END_ACTIVITY_FILTER = []
 TIME_RANGE_FILTER = {
     "start_date": "2018-01-01 00:00:00",
     "end_date": "2025-05-15 00:00:00",
@@ -100,10 +101,7 @@ def process_xes_file(input_file, output_dir, analyze_only=False):
         # Step 2: Filter logs
         logger.info("Applying filters")
         
-        # Filter for cases that start with the specified activity
-        filtered_log = pm4py.filter_start_activities(log, START_ACTIVITY_FILTER, retain=True)
-        
-        # Further filter for cases within specified time range
+        # Further filter for cases within specified time range in order to scope the timeframe
         filtered_log = pm4py.filter_time_range(
             filtered_log,
             TIME_RANGE_FILTER["start_date"],
@@ -112,6 +110,12 @@ def process_xes_file(input_file, output_dir, analyze_only=False):
             case_id_key=TIME_RANGE_FILTER["case_id_key"],
             timestamp_key=TIME_RANGE_FILTER["timestamp_key"]
         )
+
+        # Filter for cases that start with the specified activity since we are interested in those that actually start with the activity
+        filtered_log = pm4py.filter_start_activities(log, START_ACTIVITY_FILTER, retain=True)
+
+        # filter for cases that also end with the specified activity currently not used
+        # filtered_log = pm4py.filter_end_activities(filtered_log, END_ACTIVITY_FILTER, retain=True)
         
         filtered_case_count = len(filtered_log)
         filtered_event_count = count_events(filtered_log)

@@ -77,7 +77,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def process_xes_file(input_file, output_dir, analyze_only=False):
+def process_xes_file(input_file, output_dir):
     """
     Process XES file with memory-efficient operations
     
@@ -120,11 +120,6 @@ def process_xes_file(input_file, output_dir, analyze_only=False):
         filtered_case_count = len(filtered_log)
         filtered_event_count = count_events(filtered_log)
         logger.info(f"Filtered log has {filtered_case_count} cases and {filtered_event_count} events")
-        
-        # For analysis-only mode, stop here
-        if analyze_only:
-            logger.info("Analysis completed, skipping grouping and export as requested.")
-            return
         
         # Step 3: Determine grouping strategy
         item_categories = ITEM_CATEGORIES
@@ -243,7 +238,7 @@ if __name__ == "__main__":
     logger.info(f"Using configured groups with {len(ITEM_CATEGORIES)} categories")
     
     try:
-        process_xes_file(INPUT_FILE, OUTPUT_DIR, analyze_only=ANALYZE_ONLY)
+        process_xes_file(INPUT_FILE, OUTPUT_DIR)
     except Exception as e:
         logger.error(f"Processing failed: {str(e)}")
         logger.error(traceback.format_exc())

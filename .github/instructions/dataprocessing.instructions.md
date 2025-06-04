@@ -67,8 +67,13 @@ You are working on a **Process Mining** project analyzing the **BPI Challenge 20
 ### Compliance Analysis (BQ1):
 ```python
 # Focus on:
-# - Process model discovery using Inductive Miner
-# - Model alignment for deviation detection
+# - Compliance rule checks per item category
+# - Case duration calculations
+# - Compliant model discovery
+# - Deviation detection using model alignment
+# - Impact scoring based on occurrence and throughput
+# - Statistical analysis of case durations
+# - Use PM4Py for process model discovery and compliance checking
 # - Impact scoring: occurrence_impact × throughput_impact
 # - Throughput: mean + 95th percentile case duration
 # - Root cause analysis for non-compliant cases

@@ -26,6 +26,19 @@ SPLITTED_LOG_PREFIX = 'filtered_log_'
 
 RESOURCE_TYPES = ["NONE", "Batch", "User"]
 
+# Case attribute settings
+CATEGORY_ATTRIBUTE = "Item Category" # for some reason: do not include "case:" in the name
+CASE_ID_ATTRIBUTE = "concept:name"
+
+# Item categories for grouping - modify these as needed
+ITEM_CATEGORIES = {
+    "group_3_way_before": ["3-way match, invoice before GR"],
+    "group_3_way_after": ["3-way match, invoice after GR"],
+    "group_2_way": ["2-way match"],
+    "group_consignment": ["Consignment"]
+}
+
+
 # Merge all XES logs in OUTPUT_DIR into a single EventLog
 def merge_xes_logs(input_dir, output_file=COMPLETE_FILTERED_LOG):
     merged_log = EventLog()
@@ -182,13 +195,28 @@ def combine_logs():
     combined_output_path = os.path.join(OUTPUT_DIR, "combined_with_roles.xes")
     xes_exporter.apply(combined_log, combined_output_path)
     print(f"Combined log with roles exported to {combined_output_path}")
+    return combined_log
+
+def devide_on_category_item(filtered_log, category_values, output_dir):
+    item_categories = ITEM_CATEGORIES
+    for group_name, category_values in item_categories.items():
+        # Use case filtering since category is a case attribute
+        group_categorized = pm4py.filter_trace_attribute_values(
+            filtered_log,
+            CATEGORY_ATTRIBUTE, 
+            category_values, 
+            retain=True,
+            case_id_key=CASE_ID_ATTRIBUTE
+        )
+        output_path = os.path.join(output_dir, f"{group_name}.xes")
+        pm4py.write_xes(group_categorized, output_path)
 
 if __name__ == "__main__":
     # Example usage:
-    # merged_log = merge_xes_logs(INPUT_DIR)
-    # print(f"Merged log contains {len(merged_log)} traces.")
+    merged_log = merge_xes_logs(INPUT_DIR)
+    print(f"Merged log contains {len(merged_log)} traces.")
 
-    # split_on_resource_type(OUTPUT_DIR, os.path.join(INPUT_DIR, COMPLETE_FILTERED_LOG), SPLITTED_LOG_PREFIX)
+    split_on_resource_type(OUTPUT_DIR, os.path.join(INPUT_DIR, COMPLETE_FILTERED_LOG), SPLITTED_LOG_PREFIX)
     # describe_logs()
 
     user_log_path = os.path.join(OUTPUT_DIR, "userRoles.txt")
@@ -203,7 +231,6 @@ if __name__ == "__main__":
     add_user_roles_to_log(os.path.join(OUTPUT_DIR, f"{SPLITTED_LOG_PREFIX}User.xes"), role_resources)
 
     for path in [
-        # os.path.join(OUTPUT_DIR, f"{SPLITTED_LOG_PREFIX}User.xes"),
         os.path.join(OUTPUT_DIR, f"{SPLITTED_LOG_PREFIX}Batch.xes"),
         os.path.join(OUTPUT_DIR, f"{SPLITTED_LOG_PREFIX}NONE.xes")
     ]:
@@ -211,7 +238,15 @@ if __name__ == "__main__":
             copy_resource_to_userrole(path)
 
     # Combine the three logs with userRole into one log
-    combine_logs()
+    combined_logs_with_userrole = combine_logs()
     print("Processing complete.")
 
+    if(combined_logs_with_userrole is None):
+        combined_logs_with_userrole = xes_importer.apply(os.path.join(OUTPUT_DIR, "combined_with_roles.xes"))
+
+    categorized_items_dir = os.path.join(OUTPUT_DIR, "categorized_items")
+    if not os.path.exists(categorized_items_dir):
+        os.makedirs(categorized_items_dir)
+
+    devide_on_category_item(combined_logs_with_userrole, ITEM_CATEGORIES, categorized_items_dir)
     # compare_activities_in_folder(OUTPUT_DIR)

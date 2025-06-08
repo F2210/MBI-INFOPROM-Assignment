@@ -142,7 +142,7 @@ def add_user_roles_to_log(log_path, resource_roles_list):
         for event in trace:
             resource = event.get("org:resource")
             if resource and resource in user_to_role:
-                event["userRole"] = user_to_role[resource]
+                event["userRole"] = f"role_{user_to_role[resource]}"
             else:
                 event["userRole"] = "Unknown"
 
@@ -213,12 +213,15 @@ def devide_on_category_item(filtered_log, category_values, output_dir):
 
 if __name__ == "__main__":
     # Example usage:
+    # MERGE CATEGORIZED LOGS FROM
     merged_log = merge_xes_logs(INPUT_DIR)
     print(f"Merged log contains {len(merged_log)} traces.")
 
+    # 1. SPLIT ON RESOURCE TYPE
     split_on_resource_type(OUTPUT_DIR, os.path.join(INPUT_DIR, COMPLETE_FILTERED_LOG), SPLITTED_LOG_PREFIX)
     # describe_logs()
 
+    # 2. CLUSTER ON USER ROLES
     user_log_path = os.path.join(OUTPUT_DIR, "userRoles.txt")
     if os.path.exists(user_log_path):
         roles = import_user_roles_from_txt(user_log_path)
@@ -227,9 +230,12 @@ if __name__ == "__main__":
 
     # export_user_roles_to_txt(roles)
 
+    # 3. ADD USER ROLES TO LOGS
     role_resources = create_resource_lists(roles)
     add_user_roles_to_log(os.path.join(OUTPUT_DIR, f"{SPLITTED_LOG_PREFIX}User.xes"), role_resources)
 
+
+    # 4. COPY RESOURCE TO USERROLE
     for path in [
         os.path.join(OUTPUT_DIR, f"{SPLITTED_LOG_PREFIX}Batch.xes"),
         os.path.join(OUTPUT_DIR, f"{SPLITTED_LOG_PREFIX}NONE.xes")
@@ -237,7 +243,7 @@ if __name__ == "__main__":
         if os.path.exists(path):
             copy_resource_to_userrole(path)
 
-    # Combine the three logs with userRole into one log
+    # 5. COMBINE LOGS
     combined_logs_with_userrole = combine_logs()
     print("Processing complete.")
 
@@ -248,5 +254,7 @@ if __name__ == "__main__":
     if not os.path.exists(categorized_items_dir):
         os.makedirs(categorized_items_dir)
 
+    # 6. DIVIDE ON ITEM CATEGORIES
     devide_on_category_item(combined_logs_with_userrole, ITEM_CATEGORIES, categorized_items_dir)
+    
     # compare_activities_in_folder(OUTPUT_DIR)

@@ -139,86 +139,80 @@ def process_xes_file(input_file, output_dir):
         for group_name, category_values in item_categories.items():
             logger.info(f"Processing group: {group_name}")
 
-            # Filter the log for this group
-            try:
-                # Use case filtering since category is a case attribute
-                group_categorized = pm4py.filter_trace_attribute_values(
-                    filtered_log,
-                    CATEGORY_ATTRIBUTE, 
-                    category_values, 
-                    retain=True,
-                    case_id_key=CASE_ID_ATTRIBUTE
+            # Use case filtering since category is a case attribute
+            group_categorized = pm4py.filter_trace_attribute_values(
+                filtered_log,
+                CATEGORY_ATTRIBUTE, 
+                category_values, 
+                retain=True,
+                case_id_key=CASE_ID_ATTRIBUTE
+            )
+
+            logger.info(f"Found {len(group_categorized)} total cases in category '{group_name}' with events: {count_events(group_categorized)}")
+
+            # Check if we need to filter by end activity for this group
+            if group_name in END_ACTIVITY_FILTER and END_ACTIVITY_FILTER[group_name]:
+                # Filter for complete cases (those ending with the required activity)
+                group_complete = pm4py.filter_end_activities(
+                    group_categorized,
+                    END_ACTIVITY_FILTER[group_name], 
+                    retain=True
                 )
-
-                logger.info(f"Found {len(group_categorized)} total cases in category '{group_name}'")
-
-                # Check if we need to filter by end activity for this group
-                if group_name in END_ACTIVITY_FILTER and END_ACTIVITY_FILTER[group_name]:
-                    # Filter for complete cases (those ending with the required activity)
-                    group_complete = pm4py.filter_end_activities(
-                        group_categorized,
-                        END_ACTIVITY_FILTER[group_name], 
-                        retain=True
-                    )
-                    
-                    # Get complete case IDs for tracking
-                    complete_case_ids = {case.attributes[CASE_ID_ATTRIBUTE] for case in group_complete}
-                    
-                    # Create incomplete cases log by filtering out complete cases
-                    group_incomplete = pm4py.filter_end_activities(
-                        group_categorized,
-                        END_ACTIVITY_FILTER[group_name], 
-                        retain=False  # Keep cases that DON'T end with the activity
-                    )
-                    
-                    # Report stats
-                    complete_count = len(group_complete)
-                    incomplete_count = len(group_incomplete)
-                    logger.info(f"Group {group_name}: {complete_count} complete cases, {incomplete_count} incomplete cases")
-
-                    # Export complete cases to XES file if group is not empty
-                    if complete_count > 0:
-                        output_path = os.path.join(output_dir, f"{group_name}.xes")
-                        pm4py.write_xes(group_complete, output_path)
-                        logger.info(f"Exported complete cases to {output_path}")
-                        
-                        # Add case IDs to the grouped set
-                        grouped_case_ids.update(complete_case_ids)
-
-                    # Export incomplete cases separately if any exist
-                    if incomplete_count > 0:
-                        incomplete_output_path = os.path.join(incomplete_dir, f"{group_name}_incomplete.xes")
-                        pm4py.write_xes(group_incomplete, incomplete_output_path)
-                        logger.info(f"Exported incomplete cases to {incomplete_output_path}")
-                        
-                        # Add incomplete case IDs to the incomplete set for tracking
-                        for case in group_incomplete:
-                            incomplete_case_ids.add(case.attributes[CASE_ID_ATTRIBUTE])
-                    
-                    # Clear logs to free memory
-                    del group_complete
-                    del group_incomplete
-                else:
-                    # No end activity filter for this group, export all cases as complete
-                    group_count = len(group_categorized)
-                    logger.info(f"Group {group_name}: {group_count} cases (no end activity filter)")
-
-                    if group_count > 0:
-                        output_path = os.path.join(output_dir, f"{group_name}.xes")
-                        pm4py.write_xes(group_categorized, output_path)
-                        logger.info(f"Exported cases to {output_path}")
-                        
-                        # Add case IDs to the grouped set
-                        for case in group_categorized:
-                            grouped_case_ids.add(case.attributes[CASE_ID_ATTRIBUTE])
-
-                # Clear the categorized group to free memory
-                del group_categorized
-                gc.collect()
                 
-            except Exception as e:
-                logger.error(f"Error processing group {group_name}: {str(e)}")
-                logger.error(traceback.format_exc())
+                # Get complete case IDs for tracking
+                complete_case_ids = {case.attributes[CASE_ID_ATTRIBUTE] for case in group_complete}
+                
+                # Create incomplete cases log by filtering out complete cases
+                group_incomplete = pm4py.filter_end_activities(
+                    group_categorized,
+                    END_ACTIVITY_FILTER[group_name], 
+                    retain=False  # Keep cases that DON'T end with the activity
+                )
+                
+                # Report stats
+                complete_count = len(group_complete)
+                incomplete_count = len(group_incomplete)
+                logger.info(f"Group {group_name}: {complete_count} complete cases, {incomplete_count} incomplete cases")
+
+                # Export complete cases to XES file if group is not empty
+                if complete_count > 0:
+                    output_path = os.path.join(output_dir, f"{group_name}.xes")
+                    pm4py.write_xes(group_complete, output_path)
+                    logger.info(f"Exported complete cases to {output_path}")
+                    
+                    # Add case IDs to the grouped set
+                    grouped_case_ids.update(complete_case_ids)
+
+                # Export incomplete cases separately if any exist
+                if incomplete_count > 0:
+                    incomplete_output_path = os.path.join(incomplete_dir, f"{group_name}_incomplete.xes")
+                    pm4py.write_xes(group_incomplete, incomplete_output_path)
+                    logger.info(f"Exported incomplete cases to {incomplete_output_path}")
+                    
+                    # Add incomplete case IDs to the incomplete set for tracking
+                    for case in group_incomplete:
+                        incomplete_case_ids.add(case.attributes[CASE_ID_ATTRIBUTE])
+                
+                # Clear logs to free memory
+                del group_complete
+                del group_incomplete
+            else:
+                # No end activity filter for this group, export all cases as complete
+                group_count = len(group_categorized)
+                logger.info(f"Group {group_name}: {group_count} cases (no end activity filter)")
+
+                if group_count > 0:
+                    output_path = os.path.join(output_dir, f"{group_name}.xes")
+                    pm4py.write_xes(group_categorized, output_path)
+                    logger.info(f"Exported cases to {output_path}")
+                    
+                    # Add case IDs to the grouped set
+                    for case in group_categorized:
+                        grouped_case_ids.add(case.attributes[CASE_ID_ATTRIBUTE])
+
+            # Clear the categorized group to free memory
+            del group_categorized
+            gc.collect()
         
         # Step 5: Process "other" cases (those not in any group)
         logger.info("Processing 'other' cases (not matching any category)")

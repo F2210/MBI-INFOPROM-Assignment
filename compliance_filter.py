@@ -28,6 +28,7 @@ import pm4py
 from pm4py.objects.log.obj import EventLog, Trace
 from pm4py.objects.log.importer.xes import importer as xes_importer
 from pm4py.objects.log.exporter.xes import exporter as xes_exporter
+import json
 
 # Configure logging
 logging.basicConfig(
@@ -74,6 +75,14 @@ ACTIVITY_PATTERNS = {
     # Creation activities
     "creation": [
         "Create Purchase Order Item",
+    ],
+
+    "set_payment_block": [
+        "Set Payment Block",
+    ],
+
+    "payment_block_removed": [
+        "Remove Payment Block",
     ]
 }
 
@@ -183,20 +192,23 @@ def check_3way_after_compliance(case):
     1. Goods receipt must be recorded
     2. Invoice receipt must be recorded  
     3. Goods receipt must occur before invoice
-    4. Values must match (item, goods receipt, invoice)
+    4. GR-based invoice verification flag must be true
+    5. Goods receipt flag must be true
+    6. Values must match (item, goods receipt, invoice)
     """
     activities = get_activity_names(case)
     attributes = get_case_attributes(case)
+    violations = []
     
     # Rule 1: Check for goods receipt
     has_goods_receipt = has_activity_pattern(activities, ACTIVITY_PATTERNS["goods_receipt"])
     if not has_goods_receipt:
-        return False, "Missing goods receipt activity"
+        violations.append("Missing goods receipt activity")
     
     # Rule 2: Check for invoice receipt
     has_invoice_receipt = has_activity_pattern(activities, ACTIVITY_PATTERNS["invoice_receipt"])
     if not has_invoice_receipt:
-        return False, "Missing invoice receipt activity"
+        violations.append("Missing invoice receipt activity")
     
     # Rule 3: Check sequence - goods receipt before invoice
     sequence_ok = check_sequence_constraint(
@@ -205,17 +217,29 @@ def check_3way_after_compliance(case):
         ACTIVITY_PATTERNS["invoice_receipt"]
     )
     if not sequence_ok:
-        return False, "Invoice received before goods receipt"
+        violations.append("Invoice received before goods receipt")
+
+    # Rule 4: GR-based flag check
+    has_gr_flag = str(attributes.get("GR-Based Inv. Verif.", "true")).lower() == "true"
+    if not has_gr_flag:
+        violations.append("GR-based invoice verification flag is not set to true")
     
-    # Rule 4: Value matching (simplified check based on cumulative values)
+    # Rule 5: check goods receipt flag is true
+    has_gr_flag = str(attributes.get("Goods Receipt", "true")).lower() == "true"
+    if not has_gr_flag:
+        violations.append("Goods receipt flag is not set to true")
+
+    # Rule 6: Value matching (simplified check based on cumulative values)
     values = get_cumulative_values(case)
     if len(values) > 1:
         # Check if final value is consistent (basic validation)
         final_value = values[-1]
         if final_value <= 0:
-            return False, "Invalid final cumulative value"
+            violations.append("Invalid final cumulative value")
     
-    return True, "Compliant"
+    if violations:
+        return False, violations
+    return True, ["Compliant"]
 
 def check_3way_before_compliance(case):
     """
@@ -224,32 +248,76 @@ def check_3way_before_compliance(case):
     Rules:
     1. Goods receipt must be recorded
     2. Invoice receipt must be recorded
-    3. Invoice may precede goods receipt (no sequence constraint)
-    4. Values must match (creation, invoice, goods-receipt)
+    3. GR-based invoice verification flag must be false
+    4. Goods receipt flag must be true
+    5. Payment block must be set 
+    6. Payment block must be removed
+    7. Payment block must be set before it is removed
+    8. Payment block must be removed after Record Goods Receipt
+    9. Values must match (creation, invoice, goods-receipt)
     """
     activities = get_activity_names(case)
     attributes = get_case_attributes(case)
+    violations = []
     
     # Rule 1: Check for goods receipt
     has_goods_receipt = has_activity_pattern(activities, ACTIVITY_PATTERNS["goods_receipt"])
     if not has_goods_receipt:
-        return False, "Missing goods receipt activity"
+        violations.append("Missing goods receipt activity")
     
     # Rule 2: Check for invoice receipt
     has_invoice_receipt = has_activity_pattern(activities, ACTIVITY_PATTERNS["invoice_receipt"])
     if not has_invoice_receipt:
-        return False, "Missing invoice receipt activity"
+        violations.append("Missing invoice receipt activity")
     
-    # Rule 3: No sequence constraint for this type
+    # Rule 3: GR-based flag check
+    has_gr_flag = str(attributes.get("GR-based Inv. Verif.", "false")).lower() == "false"
+    if not has_gr_flag:
+        violations.append("GR-based invoice verification flag is not set to false")
     
-    # Rule 4: Value matching (simplified check)
+    # Rule 4: check goods receipt flag is true
+    has_gr_flag = str(attributes.get("Goods Receipt", "true")).lower() == "true"
+    if not has_gr_flag:
+        violations.append("Goods receipt flag is not set to true")
+
+    # Rule 5: Check if the payment block is present
+    has_payment = has_activity_pattern(activities, ACTIVITY_PATTERNS["set_payment_block"])
+    if not has_payment:
+        violations.append("Missing payment block activity")
+    
+    # Rule 6: Check if the payment block was removed
+    has_payment_removed = has_activity_pattern(activities, ACTIVITY_PATTERNS["payment_block_removed"])
+    if not has_payment_removed:
+        violations.append("Payment block was not removed, which is not allowed")
+    
+    # Rule 7: Check sequence - payment block must be set before it is removed
+    sequence_ok = check_sequence_constraint(
+        activities, 
+        ACTIVITY_PATTERNS["set_payment_block"],
+        ACTIVITY_PATTERNS["payment_block_removed"]
+    )
+    if not sequence_ok:
+        violations.append("Payment block was removed before it was set")
+
+    # Rule 8: Check sequence - payment block must be removed after goods receipt
+    sequence_ok = check_sequence_constraint(
+        activities, 
+        ACTIVITY_PATTERNS["goods_receipt"],
+        ACTIVITY_PATTERNS["payment_block_removed"]
+    )
+    if not sequence_ok:
+        violations.append("Payment block was removed before goods receipt")
+
+    # Rule 9: Value matching (simplified check)
     values = get_cumulative_values(case)
     if len(values) > 1:
         final_value = values[-1]
         if final_value <= 0:
-            return False, "Invalid final cumulative value"
+            violations.append("Invalid final cumulative value")
     
-    return True, "Compliant"
+    if violations:
+        return False, violations
+    return True, ["Compliant"]
 
 def check_2way_compliance(case):
     """
@@ -257,30 +325,39 @@ def check_2way_compliance(case):
     
     Rules:
     1. Only invoice receipt required
-    2. No goods receipt should occur
-    3. Invoice value must match original item value
+    2. GR based invoice verification flag must be false
+    3. Goods receipt should be set to false
+    4. Invoice value must match original item value
     """
     activities = get_activity_names(case)
     attributes = get_case_attributes(case)
+    violations = []
     
     # Rule 1: Check for invoice receipt
     has_invoice_receipt = has_activity_pattern(activities, ACTIVITY_PATTERNS["invoice_receipt"])
     if not has_invoice_receipt:
-        return False, "Missing invoice receipt activity"
+        violations.append("Missing invoice receipt activity")
+
+    # Rule 2: GR-based flag check
+    has_gr_flag = str(attributes.get("GR-based Inv. Verif.", "false")).lower() == "false"
+    if not has_gr_flag:
+        violations.append("GR-based invoice verification flag is not set to false")
+
+    # Rule 3: check goods receipt flag is false
+    has_gr_flag = str(attributes.get("Goods Receipt", "false")).lower() == "false"
+    if not has_gr_flag:
+        violations.append("Goods receipt flag is not set to false")
     
-    # Rule 2: No goods receipt should occur
-    has_goods_receipt = has_activity_pattern(activities, ACTIVITY_PATTERNS["goods_receipt"])
-    if has_goods_receipt:
-        return False, "Unexpected goods receipt activity"
-    
-    # Rule 3: Value matching (simplified check)
+    # Rule 4: Invoice value must match original item value
     values = get_cumulative_values(case)
     if len(values) > 1:
         final_value = values[-1]
         if final_value <= 0:
-            return False, "Invalid final cumulative value"
+            violations.append("Invalid final cumulative value")
     
-    return True, "Compliant"
+    if violations:
+        return False, violations
+    return True, ["Compliant"]
 
 def check_consignment_compliance(case):
     """
@@ -288,26 +365,42 @@ def check_consignment_compliance(case):
     
     Rules:
     1. Goods receipt expected
+    2. GR based flag must be false
+    3. Goods receipt flag must be true
     2. No invoice at purchase-order level
     3. Separate consignment invoicing process
     """
     activities = get_activity_names(case)
     attributes = get_case_attributes(case)
+    violations = []
     
     # Rule 1: Check for goods receipt
     has_goods_receipt = has_activity_pattern(activities, ACTIVITY_PATTERNS["goods_receipt"])
     if not has_goods_receipt:
-        return False, "Missing goods receipt activity"
+        violations.append("Missing goods receipt activity")
     
-    # Rule 2: No invoice at PO level (this is more complex to validate)
-    # For now, we'll accept cases that have invoice activities as they might be
-    # part of the separate consignment process
+    # Rule 2: GR-based flag check
+    has_gr_flag = str(attributes.get("GR-based Inv. Verif.", "false")).lower() == "false"
+    if not has_gr_flag:
+        violations.append("GR-based invoice verification flag is not set to false")
     
-    # Rule 3: Basic validation that the case has some activity flow
+    # Rule 3: check goods receipt flag is true
+    has_gr_flag = str(attributes.get("Goods Receipt", "true")).lower() == "true"
+    if not has_gr_flag:
+        violations.append("Goods receipt flag is not set to true")
+
+    # Rule 4: No invoice at PO level (this is more complex to validate)
+    has_invoice_receipt = has_activity_pattern(activities, ACTIVITY_PATTERNS["invoice_receipt"])
+    if has_invoice_receipt:
+        violations.append("Invoice receipt activity found at purchase order level, which is not allowed for consignment")
+
+    # Rule 5: Basic validation that the case has some activity flow
     if len(activities) < 2:
-        return False, "Insufficient activity flow"
+        violations.append("Insufficient activity flow")
     
-    return True, "Compliant"
+    if violations:
+        return False, violations
+    return True, ["Compliant"]
 
 # ---------------------------
 # MAIN COMPLIANCE FILTERING FUNCTION
@@ -351,17 +444,19 @@ def filter_compliance_by_category(log, category_name):
     
     # Process each case
     for case in log:
-        is_compliant, reason = checker(case)
+        is_compliant, reasons = checker(case)
         
         if is_compliant:
             compliant_cases.append(case)
             compliance_stats['compliant_cases'] += 1
-            compliance_stats['compliance_reasons'][reason] += 1
+            for reason in reasons:
+                compliance_stats['compliance_reasons'][reason] += 1
         else:
             non_compliant_cases.append(case)
             compliance_stats['non_compliant_cases'] += 1
-            compliance_stats['non_compliance_reasons'][reason] += 1
-    
+            for reason in reasons:
+                compliance_stats['non_compliance_reasons'][reason] += 1
+
     # Create filtered logs
     compliant_log = EventLog(compliant_cases, attributes=log.attributes, extensions=log.extensions)
     non_compliant_log = EventLog(non_compliant_cases, attributes=log.attributes, extensions=log.extensions)
@@ -438,6 +533,11 @@ def process_all_categories():
     print("COMPLIANCE FILTERING SUMMARY")
     print("="*60)
     
+    # Create a directory for statistics
+    STATS_DIR = os.path.join(OUTPUT_DIR, 'stats')
+    os.makedirs(STATS_DIR, exist_ok=True)
+    
+    
     for category, stats in overall_stats.items():
         total = stats['total_cases']
         compliant = stats['compliant_cases']
@@ -453,6 +553,21 @@ def process_all_categories():
             print("  Top non-compliance reasons:")
             for reason, count in stats['non_compliance_reasons'].most_common(3):
                 print(f"    - {reason}: {count} cases")
+        
+        # Save non-compliance reasons to JSON
+        non_compliance_data = {
+            'category': category,
+            'total_cases': total,
+            'non_compliant_cases': non_compliant,
+            'reasons': dict(stats['non_compliance_reasons'])
+        }
+        
+        # Save to JSON file
+        json_filename = f"{category}_non_compliance.json"
+        json_path = os.path.join(STATS_DIR, json_filename)
+        with open(json_path, 'w') as f:
+            json.dump(non_compliance_data, f, indent=4)
+        logger.info(f"Saved non-compliance statistics to {json_path}")
 
 if __name__ == "__main__":
     try:

@@ -43,7 +43,6 @@ XES_IMPORT_PARAMS = {
 }
 
 # Filter settings
-START_ACTIVITY_FILTER = ["Create Purchase Order Item"]
 TIME_RANGE_FILTER = {
     "start_date": "2018-01-01 00:00:00",
     "end_date": "2025-05-15 00:00:00",
@@ -51,6 +50,9 @@ TIME_RANGE_FILTER = {
     "case_id_key": "concept:name",
     "timestamp_key": "time:timestamp"
 }
+
+# Start activity filter applied on all cases
+START_ACTIVITY_FILTER = ["Create Purchase Order Item"]
 
 # Item categories for grouping
 ITEM_CATEGORIES = {

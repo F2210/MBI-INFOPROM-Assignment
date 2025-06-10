@@ -172,7 +172,7 @@ def process_xes_file(input_file, output_dir):
                     END_ACTIVITY_FILTER[group_name], 
                     retain=False  # Keep cases that DON'T end with the activity
                 )
-                
+
                 # Report stats
                 complete_count = len(group_complete)
                 incomplete_count = len(group_incomplete)

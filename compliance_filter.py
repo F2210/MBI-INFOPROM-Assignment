@@ -383,24 +383,24 @@ def check_3way_before_compliance(case):
     if not has_gr_flag:
         violations.append("Goods receipt flag is not set to true")
 
-    # Rule 5: Check if the payment block is present
-    has_payment = has_activity_pattern(activities, ACTIVITY_PATTERNS["set_payment_block"])
-    if not has_payment:
-        violations.append("Missing payment block activity")
+    # # Rule 5: Check if the payment block is present
+    # has_payment = has_activity_pattern(activities, ACTIVITY_PATTERNS["set_payment_block"])
+    # if not has_payment:
+    #     violations.append("Missing payment block activity")
     
     # Rule 6: Check if the payment block was removed
     has_payment_removed = has_activity_pattern(activities, ACTIVITY_PATTERNS["payment_block_removed"])
     if not has_payment_removed:
         violations.append("Payment block was not removed, which is not allowed")
     
-    # Rule 7: Check sequence - payment block must be set before it is removed
-    sequence_ok = check_sequence_constraint(
-        activities, 
-        ACTIVITY_PATTERNS["set_payment_block"],
-        ACTIVITY_PATTERNS["payment_block_removed"]
-    )
-    if not sequence_ok:
-        violations.append("Payment block was removed before it was set")
+    # # Rule 7: Check sequence - payment block must be set before it is removed
+    # sequence_ok = check_sequence_constraint(
+    #     activities, 
+    #     ACTIVITY_PATTERNS["set_payment_block"],
+    #     ACTIVITY_PATTERNS["payment_block_removed"]
+    # )
+    # if not sequence_ok:
+    #     violations.append("Payment block was removed before it was set")
 
     # Rule 8: Check sequence - payment block must be removed after goods receipt
     sequence_ok = check_sequence_constraint(

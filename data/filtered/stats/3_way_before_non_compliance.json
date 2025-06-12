@@ -1,14 +1,12 @@
 {
     "category": "3_way_before",
     "total_cases": 147240,
-    "non_compliant_cases": 147230,
+    "non_compliant_cases": 111017,
     "reasons": {
-        "Missing payment block activity": 147195,
         "Payment block was not removed, which is not allowed": 106880,
         "PO item value does not match expected value from invoice receipts": 5856,
         "Number of goods receipts does not equal number of invoice receipts": 5965,
         "Payment block was removed before goods receipt": 540,
-        "Payment block was removed before it was set": 14,
         "Missing goods receipt activity": 409,
         "No goods receipts found for value validation": 103,
         "Missing invoice receipt activity": 312,

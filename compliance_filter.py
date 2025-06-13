@@ -180,6 +180,113 @@ def get_cumulative_values(case):
             values.append(event["Cumulative net worth (EUR)"])
     return values
 
+def get_po_item_value(case):
+    """Extract PO item value from case attributes or first event"""
+    # Try to get from case attributes first
+    attributes = get_case_attributes(case)
+    if "PO item value" in attributes:
+        return attributes["PO item value"]
+    
+    # If not in attributes, get from first event with cumulative value
+    values = get_cumulative_values(case)
+    if values:
+        return values[0]
+    return 0
+
+def count_activity_occurrences(activities, patterns):
+    """Count how many times activities matching patterns occur"""
+    count = 0
+    for activity in activities:
+        for pattern in patterns:
+            if pattern.lower() in activity.lower():
+                count += 1
+                break
+    return count
+
+def check_3way_value_compliance(case):
+    """
+    Check value compliance for 3-way match cases
+    Rules:
+    - PO item value = Cumulated value of invoice receipts ÷ number of invoice receipts
+    - Cumulated value of GRs = Cumulated value of invoice receipts  
+    - Number of GRs = Number of invoice receipts
+    """
+    activities = get_activity_names(case)
+    po_item_value = get_po_item_value(case)
+    
+    # Count invoice receipts and goods receipts
+    invoice_count = count_activity_occurrences(activities, ACTIVITY_PATTERNS["invoice_receipt"])
+    gr_count = count_activity_occurrences(activities, ACTIVITY_PATTERNS["goods_receipt"])
+    
+    violations = []
+    
+    # Check if we have the required activities to validate
+    if invoice_count == 0:
+        violations.append("No invoice receipts found for value validation")
+        return violations
+    
+    if gr_count == 0:
+        violations.append("No goods receipts found for value validation")
+        return violations
+    
+    # Rule: Number of GRs = Number of invoice receipts
+    if gr_count != invoice_count:
+        violations.append(f"Number of goods receipts does not equal number of invoice receipts")
+    
+    # Get cumulative values for validation
+    cumulative_values = get_cumulative_values(case)
+    if not cumulative_values:
+        violations.append("No cumulative values found for validation")
+        return violations
+    
+    # Use the final cumulative value as the total
+    final_cumulative_value = cumulative_values[-1]
+    
+    # Rule: PO item value = Cumulated value of invoice receipts ÷ number of invoice receipts
+    if invoice_count > 0:
+        expected_po_value = final_cumulative_value / invoice_count
+        if abs(po_item_value - expected_po_value) > 0.01:  # Allow small floating point differences
+            violations.append(f"PO item value does not match expected value from invoice receipts")
+    
+    # Check for zero values which typically indicate non-compliance
+    if po_item_value == 0:
+        violations.append("PO item value is zero, which may indicate invalid data")
+    
+    if final_cumulative_value == 0 and po_item_value != 0:
+        violations.append("Cumulative value is zero but PO item value is non-zero")
+    
+    return violations
+
+def check_2way_value_compliance(case):
+    """
+    Check value compliance for 2-way match cases
+    Rules:
+    - Invoice value must match original PO item value
+    """
+    po_item_value = get_po_item_value(case)
+    cumulative_values = get_cumulative_values(case)
+    
+    violations = []
+    
+    if not cumulative_values:
+        violations.append("No cumulative values found for validation")
+        return violations
+    
+    final_cumulative_value = cumulative_values[-1]
+    
+    # Rule: Invoice value must match PO item value
+    if abs(po_item_value - final_cumulative_value) > 0.01:  # Allow small floating point differences
+        violations.append(f"Invoice value does not match PO item value")
+    
+    # Check for zero values
+    if po_item_value == 0:
+        violations.append("PO item value is zero, which may indicate invalid data")
+    
+    if final_cumulative_value == 0 and po_item_value != 0:
+        violations.append("Invoice value is zero but PO item value is non-zero")
+    
+    return violations
+
 # ---------------------------
 # COMPLIANCE CHECKING FUNCTIONS
 # ---------------------------
@@ -229,14 +336,10 @@ def check_3way_after_compliance(case):
     if not has_gr_flag:
         violations.append("Goods receipt flag is not set to true")
 
-    # Rule 6: Value matching (simplified check based on cumulative values)
-    values = get_cumulative_values(case)
-    if len(values) > 1:
-        # Check if final value is consistent (basic validation)
-        final_value = values[-1]
-        if final_value <= 0:
-            violations.append("Invalid final cumulative value")
-    
+    # Rule 6: Value matching using 3-way specific rules
+    value_violations = check_3way_value_compliance(case)
+    violations.extend(value_violations)
+        
     if violations:
         return False, violations
     return True, ["Compliant"]
@@ -280,24 +383,24 @@ def check_3way_before_compliance(case):
     if not has_gr_flag:
         violations.append("Goods receipt flag is not set to true")
 
-    # Rule 5: Check if the payment block is present
-    has_payment = has_activity_pattern(activities, ACTIVITY_PATTERNS["set_payment_block"])
-    if not has_payment:
-        violations.append("Missing payment block activity")
+    # # Rule 5: Check if the payment block is present
+    # has_payment = has_activity_pattern(activities, ACTIVITY_PATTERNS["set_payment_block"])
+    # if not has_payment:
+    #     violations.append("Missing payment block activity")
     
     # Rule 6: Check if the payment block was removed
     has_payment_removed = has_activity_pattern(activities, ACTIVITY_PATTERNS["payment_block_removed"])
     if not has_payment_removed:
         violations.append("Payment block was not removed, which is not allowed")
     
-    # Rule 7: Check sequence - payment block must be set before it is removed
-    sequence_ok = check_sequence_constraint(
-        activities, 
-        ACTIVITY_PATTERNS["set_payment_block"],
-        ACTIVITY_PATTERNS["payment_block_removed"]
-    )
-    if not sequence_ok:
-        violations.append("Payment block was removed before it was set")
+    # # Rule 7: Check sequence - payment block must be set before it is removed
+    # sequence_ok = check_sequence_constraint(
+    #     activities, 
+    #     ACTIVITY_PATTERNS["set_payment_block"],
+    #     ACTIVITY_PATTERNS["payment_block_removed"]
+    # )
+    # if not sequence_ok:
+    #     violations.append("Payment block was removed before it was set")
 
     # Rule 8: Check sequence - payment block must be removed after goods receipt
     sequence_ok = check_sequence_constraint(
@@ -308,12 +411,9 @@ def check_3way_before_compliance(case):
     if not sequence_ok:
         violations.append("Payment block was removed before goods receipt")
 
-    # Rule 9: Value matching (simplified check)
-    values = get_cumulative_values(case)
-    if len(values) > 1:
-        final_value = values[-1]
-        if final_value <= 0:
-            violations.append("Invalid final cumulative value")
+    # Rule 9: Value matching using 3-way specific rules
+    value_violations = check_3way_value_compliance(case)
+    violations.extend(value_violations)
     
     if violations:
         return False, violations
@@ -348,12 +448,9 @@ def check_2way_compliance(case):
     if not has_gr_flag:
         violations.append("Goods receipt flag is not set to false")
     
-    # Rule 4: Invoice value must match original item value
-    values = get_cumulative_values(case)
-    if len(values) > 1:
-        final_value = values[-1]
-        if final_value <= 0:
-            violations.append("Invalid final cumulative value")
+    # Rule 4: Invoice value must match original item value using 2-way specific rules
+    value_violations = check_2way_value_compliance(case)
+    violations.extend(value_violations)
     
     if violations:
         return False, violations
@@ -393,10 +490,6 @@ def check_consignment_compliance(case):
     has_invoice_receipt = has_activity_pattern(activities, ACTIVITY_PATTERNS["invoice_receipt"])
     if has_invoice_receipt:
         violations.append("Invoice receipt activity found at purchase order level, which is not allowed for consignment")
-
-    # Rule 5: Basic validation that the case has some activity flow
-    if len(activities) < 2:
-        violations.append("Insufficient activity flow")
     
     if violations:
         return False, violations

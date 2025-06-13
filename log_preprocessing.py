@@ -43,19 +43,31 @@ XES_IMPORT_PARAMS = {
 }
 
 # Filter settings
-START_ACTIVITY_FILTER = ["Create Purchase Order Item"]
-END_ACTIVITY_FILTER = {
-    "group_3_way_before": ["Clear Invoice"],
-    "group_3_way_after": ["Clear Invoice"],
-    "group_2_way": ["Clear Invoice"],
-    "group_consignment": ["Record Goods Receipt"]
-}
 TIME_RANGE_FILTER = {
     "start_date": "2018-01-01 00:00:00",
     "end_date": "2025-05-15 00:00:00",
     "mode": "traces_contained",
     "case_id_key": "concept:name",
     "timestamp_key": "time:timestamp"
+}
+
+# Start activity filter applied on all cases
+START_ACTIVITY_FILTER = ["Create Purchase Order Item"]
+
+# Item categories for grouping
+ITEM_CATEGORIES = {
+    "group_3_way_before": ["3-way match, invoice before GR"],
+    "group_3_way_after": ["3-way match, invoice after GR"],
+    "group_2_way": ["2-way match"],
+    "group_consignment": ["Consignment"]
+}
+
+# End activity filters for each group
+END_ACTIVITY_FILTER = {
+    "group_3_way_before": ["Clear Invoice"],
+    "group_3_way_after": ["Clear Invoice"],
+    "group_2_way": ["Clear Invoice"],
+    "group_consignment": ["Record Goods Receipt"]
 }
 
 # Case attribute settings
@@ -66,14 +78,6 @@ CASE_ID_ATTRIBUTE = "concept:name"
 AUTO_DETECTION_THRESHOLD = 1000  # Minimum cases to create a separate group
 MAX_SAMPLE_SIZE = 1000  # Maximum cases to sample for analysis
 BATCH_SIZE = 1000  # Batch size for processing "other" cases
-
-# Item categories for grouping - modify these as needed
-ITEM_CATEGORIES = {
-    "group_3_way_before": ["3-way match, invoice before GR"],
-    "group_3_way_after": ["3-way match, invoice after GR"],
-    "group_2_way": ["2-way match"],
-    "group_consignment": ["Consignment"]
-}
 
 # Configure logging
 logging.basicConfig(
@@ -168,7 +172,7 @@ def process_xes_file(input_file, output_dir):
                     END_ACTIVITY_FILTER[group_name], 
                     retain=False  # Keep cases that DON'T end with the activity
                 )
-                
+
                 # Report stats
                 complete_count = len(group_complete)
                 incomplete_count = len(group_incomplete)

@@ -8,18 +8,24 @@ import json
 import pm4py
 from pm4py.objects.log.obj import EventLog
 from analyze_logs import count_events
-from resources_handover_preprocessing import get_resource_type, describe_log, compare_activities_in_folder, import_user_roles_from_txt
+from resources_handover_preprocessing import get_resource_type, describe_log, compare_activities_in_folder, import_user_roles_from_txt, export_user_roles_to_txt, devide_on_category_item
 from pm4py.objects.log.importer.xes import importer as xes_importer
 from pm4py.objects.log.exporter.xes import exporter as xes_exporter
 from pm4py.algo.organizational_mining.roles import algorithm as roles_algo
 from pm4py.objects.org.roles.obj import Role
+import pandas as pd
 
 import re
+from sklearn.cluster import KMeans
+import numpy as np
+from collections import defaultdict
 
 
 INPUT_FILE = './data/BPI_Challenge_2019.xes'
 INPUT_DIR = './data/filtered'
 OUTPUT_DIR = './data/filtered/preprocessed_handover'
+ROLE_FILES_DIR = './data/filtered/preprocessed_handover/roles'
+RESOURCE_FILES_DIR = './data/filtered/preprocessed_handover/splitted_roletype_logs'
 
 COMPLETE_FILTERED_LOG = 'complete_filtered_log.xes'
 SPLITTED_LOG_PREFIX = 'filtered_log_'
@@ -55,18 +61,16 @@ def merge_xes_logs(input_dir, output_file=COMPLETE_FILTERED_LOG):
     pm4py.write_xes(merged_log, output_path)
     return merged_log
 
-def split_on_resource_type(output_dir, input_log_name, output_log_name=COMPLETE_FILTERED_LOG):
+def split_on_resource_type(input_log, output_dir, output_log_name=COMPLETE_FILTERED_LOG):
     # Prepare sublogs for each resource type
     sublogs = {"NONE": [], "Batch": [], "User": []}
 
-    # Import the log using pm4py
-    log = xes_importer.apply(input_log_name)
 
     # Prepare sublogs for each resource type
     sublogs = {"NONE": EventLog(), "Batch": EventLog(), "User": EventLog()}
     other_count = 0
 
-    for trace in log:
+    for trace in input_log:
         # Collect events by resource type for this trace
         events_by_type = {"NONE": [], "Batch": [], "User": [] , "Other": []}
         for event in trace:
@@ -89,16 +93,18 @@ def split_on_resource_type(output_dir, input_log_name, output_log_name=COMPLETE_
                     new_trace.append(new_event)
                 sublogs[rtype].append(new_trace)
         
-    print(f"Processed {len(log)} traces, found {other_count} events with unknown resource type.")
+    print(f"Processed {len(input_log)} traces, found {other_count} events with unknown resource type.")
 
     # Export sublogs to XES
     for rtype, sublog in sublogs.items():
         if len(sublog) > 0:
-            output_file = os.path.join(output_dir, f"{output_log_name}{rtype}.xes")
+            output_file = os.path.join(output_dir, f"{SPLITTED_LOG_PREFIX}{rtype}.xes")
             # Ensure the output directory exists
             os.makedirs(os.path.dirname(output_file), exist_ok=True) 
             xes_exporter.apply(sublog, output_file)
             print(f"Exported {len(sublog)} traces with {sum(len(trace) for trace in sublog)} events to {output_file}")
+
+    return sublogs["User"]
 
 def describe_logs():
     for rtype in RESOURCE_TYPES:
@@ -109,15 +115,30 @@ def describe_logs():
         else:
             print(f"Log file for resource type {rtype} does not exist. Skipping description.")
 
-def apply_organizational_roles(xes_log_path):
+def apply_organizational_roles(log):
     """
     Applies pm4py's organizational_mining.roles function to the given XES log file.
     Returns the roles dictionary.
     """
+    
+    # Transform the xes_log_path to a list of (resource, activity) couples with their occurrence counts
+    res_act_couples = {}
+    for trace in log:
+        for event in trace:
+            resource = event.get("org:resource")
+            activity = event.get("concept:name")
+            if resource and activity:
+                key = (resource, activity)
+                res_act_couples[key] = res_act_couples.get(key, 0) + 1
 
-    log = xes_importer.apply(xes_log_path)
     roles = roles_algo.apply(log)
-    print(f"Extracted {len(roles)} roles from {xes_log_path}")
+    # Save roles to userRole.txt in ROLE_FILES_DIR
+    roles_txt_path = os.path.join(ROLE_FILES_DIR, "userRoles.txt")
+    os.makedirs(os.path.dirname(roles_txt_path), exist_ok=True)
+    with open(roles_txt_path, "w", encoding="utf-8") as f:
+        for idx, role in enumerate(roles):
+            f.write(f"Role_{idx}: {role}\n")
+    print(f"Roles exported to {roles_txt_path}, extracted {len(roles)} roles")
     return roles
 
 def add_user_roles_to_log(log_path, resource_roles_list):
@@ -130,7 +151,6 @@ def add_user_roles_to_log(log_path, resource_roles_list):
 
     for role_index, user_list in enumerate(resource_roles_list):
         for user in user_list:
-            # Optionally prevent overwriting if a user appears in multiple roles
             user_to_role[user] = role_index
 
 
@@ -151,41 +171,45 @@ def add_user_roles_to_log(log_path, resource_roles_list):
     xes_exporter.apply(log, output_file)
     print(f"Added userRole attribute to events and exported to {output_file}")
 
-def create_resource_lists(roles):
-    role_resources = []
+def extract_users_from_roles(roles):
+    """
+    Extracts user IDs from the roles list, which is expected to be a list of strings.
+    Each string should contain a pattern like "Originators importance {user1, user2, ...}".
+    Returns a list of user IDs.
+    """
+    user_ids = []
     for role in roles:
         if not isinstance(role, str):
             role = str(role)
         match = re.search(r"Originators importance\s*{([^}]*)}", role)
         if match:
             users_str = match.group(1)
-            user_ids = [user.split(":")[0].strip().strip("'\"") for user in users_str.split(",")]
-        else:
-            user_ids = []
-        role_resources.append(user_ids)
+            users_split = [user.strip() for user in users_str.split(",")]
+            user_ids.append(users_split)
+    print(f"Extracted {len(user_ids)} user lists from roles.")
+    return user_ids
 
-    return role_resources
-
-def copy_resource_to_userrole(xes_file_path):
+def copy_resource_to_userrole(input_file_path, output_file_path):
     """
     Imports a log from the given XES file, copies the value of the 'org:resource' attribute
     to a new attribute 'userRole' for each event, and exports the modified log to a new XES file.
     """
-    log = xes_importer.apply(xes_file_path)
+    log = xes_importer.apply(input_file_path)
     for trace in log:
         for event in trace:
             resource = event.get("org:resource", "Unknown")
             event["userRole"] = resource
-    output_file = os.path.splitext(xes_file_path)[0] + "_with_UserRole.xes"
-    xes_exporter.apply(log, output_file)
-    print(f"Copied 'org:resource' to 'userRole' and exported to {output_file}")
+    xes_exporter.apply(log, output_file_path)
 
-def combine_logs():
+def combine_logs(user_log):
     combined_log = EventLog()
     for rtype in RESOURCE_TYPES:
-        log_path = os.path.join(OUTPUT_DIR, f"{SPLITTED_LOG_PREFIX}{rtype}_with_UserRole.xes")
+        log_path = os.path.join(ROLE_FILES_DIR, f"{SPLITTED_LOG_PREFIX}{rtype}_with_UserRole.xes")
         if os.path.exists(log_path):
-            log = xes_importer.apply(log_path)
+            if rtype == "User":
+                log = user_log  # Use the user log directly
+            else:
+                log = xes_importer.apply(log_path)
             for trace in log:
                 combined_log.append(trace)
         else:
@@ -197,64 +221,184 @@ def combine_logs():
     print(f"Combined log with roles exported to {combined_output_path}")
     return combined_log
 
-def devide_on_category_item(filtered_log, category_values, output_dir):
-    item_categories = ITEM_CATEGORIES
-    for group_name, category_values in item_categories.items():
-        # Use case filtering since category is a case attribute
-        group_categorized = pm4py.filter_trace_attribute_values(
-            filtered_log,
-            CATEGORY_ATTRIBUTE, 
-            category_values, 
-            retain=True,
-            case_id_key=CASE_ID_ATTRIBUTE
-        )
-        output_path = os.path.join(output_dir, f"{group_name}.xes")
-        pm4py.write_xes(group_categorized, output_path)
+def assign_dominant_roles(roles, threshold: float = 0.3):
+    """
+    Assigns a significantly dominant role per user and returns:
+    - A DataFrame with 'user_id' and 'dominant_role' (only where one is significantly dominant)
+    - A list of users without a significantly dominant role
+
+    :param roles: List of roles as returned by apply_organizational_roles (list of dicts with 'role' and 'users')
+    :param threshold: Required margin between top role and next (e.g., 0.3 means 30%)
+    :return: (dominant_roles_df, ambiguous_users)
+    """
+    # Build a mapping: user_id -> {role: importance}
+    user_role_importance = {}
+    # roles is a list of lists of dicts: [{user_id: importance, ...}, ...]
+    for role_idx, role_dict in enumerate(roles):
+        for item in role_dict:
+            # Remove possible surrounding whitespace and quotes
+            item = item.strip().strip('"').strip("'")
+            if ':' in item:
+                user, importance = item.split(':', 1)
+                user = user.strip().strip("'").strip('"')
+                importance = float(importance.strip())
+            else:
+                print('Warning: Item does not contain a colon, skipping:', item)
+            if user not in user_role_importance:
+                user_role_importance[user] = {}
+            user_role_importance[user][role_idx] = importance
+
+    print(f"Extracted user-role importance mapping: {user_role_importance["user_359"]}")
+
+    dominant_roles = []
+    ambiguous_users = []
+
+    for user, role_importances in user_role_importance.items():
+        sorted_roles = sorted(role_importances.items(), key=lambda x: x[1], reverse=True)
+        if len(sorted_roles) < 2:
+            # Only one role - automatically dominant
+            dominant_roles.append({'user_id': user, 'dominant_role': f'role_{sorted_roles[0][0]}'})
+            continue
+
+        top_role, top_importance = sorted_roles[0]
+        next_role, next_importance = sorted_roles[1]
+
+        if top_importance == 0:
+            ambiguous_users.append(user)
+            continue
+
+        if (top_importance - next_importance) / top_importance >= threshold:
+            dominant_roles.append({'user_id': user, 'dominant_role': f'role_{top_role}'})
+        else:
+            ambiguous_users.append({
+                'user_id': user,
+                'ambiguous_role_num': len(sorted_roles),
+                'ambiguous_roles': [
+                    {'role': f'role_{r[0]}', 'importance': r[1]} for r in sorted_roles
+                ]
+            })
+
+    # Export dominant_roles in the requested format
+    role_to_users = defaultdict(list)
+    for entry in dominant_roles:
+        role_to_users[entry['dominant_role']].append(entry['user_id'])
+
+        dominant_roles_path = os.path.join(f"{ROLE_FILES_DIR}/txt", "dominant_roles_export.txt")
+        os.makedirs(os.path.dirname(dominant_roles_path), exist_ok=True)
+        with open(dominant_roles_path, "w", encoding="utf-8") as f:
+                for role, users in role_to_users.items():
+                    f.write(f"{role} ({len(users)}): [{', '.join(users)}]\n")
+    print(f"Dominant roles exported to {dominant_roles_path} with {len(dominant_roles)} entries.")
+
+    # Export ambiguous_users, each line is an item in the list as it is
+    ambiguous_users_path = os.path.join(f"{ROLE_FILES_DIR}/txt", "ambiguous_users_export.txt")
+    os.makedirs(os.path.dirname(ambiguous_users_path), exist_ok=True)
+    with open(ambiguous_users_path, "w", encoding="utf-8") as f:
+        for item in ambiguous_users:
+            f.write(f"{str(item)}\n")
+    print(f"Ambiguous users exported to {ambiguous_users_path} with {len(ambiguous_users)} entries.")
+
+    return pd.DataFrame(dominant_roles), ambiguous_users
+
+def assign_user_roles_in_log(log, dominant_roles_df, ambiguous_users):
+    """
+    Assigns 'userRole' attribute to each event in the log:
+    - If the user has a dominant role, assign that role.
+    - If the user is in ambiguous_users, assign 'unclear'.
+    """
+    # Build lookup for dominant roles
+    dominant_roles = dict(zip(dominant_roles_df['user_id'], dominant_roles_df['dominant_role']))
+    # Build set of ambiguous user_ids
+    ambiguous_user_ids = set()
+    for entry in ambiguous_users:
+        if isinstance(entry, dict):
+            ambiguous_user_ids.add(entry['user_id'])
+        elif isinstance(entry, str):
+            ambiguous_user_ids.add(entry)
+    # Assign userRole in log
+    for trace in log:
+        for event in trace:
+            resource = event.get("org:resource")
+            if resource in dominant_roles:
+                event["userRole"] = dominant_roles[resource]
+            elif resource in ambiguous_user_ids:
+                event["userRole"] = "unclear"
+            else:
+                event["userRole"] = "Unknown"
+    # Export the modified log
+    output_file = os.path.join(ROLE_FILES_DIR, "filtered_log_User_with_UserRole.xes")
+    xes_exporter.apply(log, output_file)
+    print(f"Exported log with user roles to {output_file}")
+    return log
+
 
 if __name__ == "__main__":
-    # Example usage:
-    # MERGE CATEGORIZED LOGS FROM
-    merged_log = merge_xes_logs(INPUT_DIR)
-    print(f"Merged log contains {len(merged_log)} traces.")
+    # MERGE CATEGORIZED LOGS FROM PREPROCESSING
+    user_log_path = os.path.join(RESOURCE_FILES_DIR, f"filtered_log_User.xes")
 
-    # 1. SPLIT ON RESOURCE TYPE
-    split_on_resource_type(OUTPUT_DIR, os.path.join(INPUT_DIR, COMPLETE_FILTERED_LOG), SPLITTED_LOG_PREFIX)
+
+    if not os.path.exists(user_log_path):
+        combined_filtered_log = os.path.join(INPUT_DIR, COMPLETE_FILTERED_LOG)
+        if os.path.exists(combined_filtered_log):
+            print(f"1. Using existing merged log: {combined_filtered_log}")
+            merged_log = xes_importer.apply(combined_filtered_log)
+        else:   
+            print(f"1. Merging logs in {INPUT_DIR} into {COMPLETE_FILTERED_LOG}")
+            merged_log = merge_xes_logs(INPUT_DIR)
+
+        # 1. SPLIT ON RESOURCE TYPE
+        user_log = split_on_resource_type(merged_log, RESOURCE_FILES_DIR, SPLITTED_LOG_PREFIX)
+
+    else:
+        print(f"1. Using existing user log: {user_log_path}")
+        user_log = xes_importer.apply(user_log_path)
+  
     # describe_logs()
 
     # 2. CLUSTER ON USER ROLES
-    user_log_path = os.path.join(OUTPUT_DIR, "userRoles.txt")
-    if os.path.exists(user_log_path):
-        roles = import_user_roles_from_txt(user_log_path)
+    userRoles_log_path = os.path.join(ROLE_FILES_DIR, "userRoles.txt")
+    if os.path.exists(userRoles_log_path):
+        print(f"2. Importing user roles from {userRoles_log_path}")
+        roles = import_user_roles_from_txt(userRoles_log_path)
     else:
-        roles = apply_organizational_roles(user_log_path)
-
-    # export_user_roles_to_txt(roles)
+        print("2. Applying organizational roles mining on user log")
+        roles = apply_organizational_roles(user_log)
 
     # 3. ADD USER ROLES TO LOGS
-    role_resources = create_resource_lists(roles)
-    add_user_roles_to_log(os.path.join(OUTPUT_DIR, f"{SPLITTED_LOG_PREFIX}User.xes"), role_resources)
-
+    userRole_log_path = os.path.join(ROLE_FILES_DIR, "filtered_log_User_with_UserRole.xes")
+    if os.path.exists(userRole_log_path):
+        print(f"3. User roles already assigned in log: {userRole_log_path}")
+        userRole_log = xes_importer.apply(userRole_log_path)
+    else:
+        print("3. Assigning user roles in log")
+        resources_per_role = extract_users_from_roles(roles)
+        dominant_df, ambiguous_users = assign_dominant_roles(resources_per_role, threshold=0.3)
+        userRole_log = assign_user_roles_in_log(
+            user_log,
+            dominant_df,
+            ambiguous_users
+        )
+    # print(f"Assigned user roles in log. Dominant roles: {len(dominant_df)}, Ambiguous users: {len(ambiguous_users)}")
 
     # 4. COPY RESOURCE TO USERROLE
-    for path in [
-        os.path.join(OUTPUT_DIR, f"{SPLITTED_LOG_PREFIX}Batch.xes"),
-        os.path.join(OUTPUT_DIR, f"{SPLITTED_LOG_PREFIX}NONE.xes")
+    for output_path, input_path in [
+        (os.path.join(ROLE_FILES_DIR, f"{SPLITTED_LOG_PREFIX}Batch_with_UserRole.xes"), os.path.join(RESOURCE_FILES_DIR, f"{SPLITTED_LOG_PREFIX}Batch.xes")),
+        (os.path.join(ROLE_FILES_DIR, f"{SPLITTED_LOG_PREFIX}NONE_with_UserRole.xes"), os.path.join(RESOURCE_FILES_DIR, f"{SPLITTED_LOG_PREFIX}NONE.xes"))
     ]:
-        if os.path.exists(path):
-            copy_resource_to_userrole(path)
+        if not os.path.exists(output_path):
+            print(f"4. Copying 'org:resource' to 'userRole' in {output_path}")
+            copy_resource_to_userrole(input_path, output_path)
 
     # 5. COMBINE LOGS
-    combined_logs_with_userrole = combine_logs()
-    print("Processing complete.")
+    print("5. Combining logs with user roles")
+    combined_logs_with_userrole = combine_logs(userRole_log)
+    print("Combining resources log completed")
 
-    if(combined_logs_with_userrole is None):
-        combined_logs_with_userrole = xes_importer.apply(os.path.join(OUTPUT_DIR, "combined_with_roles.xes"))
-
-    categorized_items_dir = os.path.join(OUTPUT_DIR, "categorized_items")
+    categorized_items_dir = os.path.join(OUTPUT_DIR, "preprocessed_categorized_logs")
     if not os.path.exists(categorized_items_dir):
         os.makedirs(categorized_items_dir)
 
     # 6. DIVIDE ON ITEM CATEGORIES
-    devide_on_category_item(combined_logs_with_userrole, ITEM_CATEGORIES, categorized_items_dir)
+    print("6. Dividing logs on item categories")
+    devide_on_category_item(combined_logs_with_userrole, categorized_items_dir, ITEM_CATEGORIES)
     
-    # compare_activities_in_folder(OUTPUT_DIR)

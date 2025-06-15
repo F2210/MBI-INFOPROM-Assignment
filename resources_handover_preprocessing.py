@@ -3,6 +3,7 @@ import os
 from pm4py.objects.log.importer.xes import importer as xes_importer
 from pm4py.objects.log.exporter.xes import exporter as xes_exporter
 from collections import Counter
+import pm4py
 
 def describe_log(input_file):
     """
@@ -76,23 +77,50 @@ def compare_activities_in_folder(folder_path):
 
     return [(activity, logs) for activity, logs in activity_logs.items()]
 
+def export_user_roles_to_txt(roles, txt_file):
+    """
+    Exports a list of user roles to a txt file.
+
+    Args:
+        roles: List of roles (strings).
+        txt_file: Path to the output txt file.
+    """
+    with open(txt_file, "w", encoding="utf-8") as f:
+        f.write(f"{len(roles)} User Roles Export\n")
+        for role in roles:
+            f.write(f"Role: {role}\n")
+    print(f"Exported {len(roles)} user roles to {txt_file}")
+
 def import_user_roles_from_txt(txt_file):
     """
-    Reads user roles from a txt file exported by export_user_roles_to_txt.
-    
-    Args:
-        txt_file: Path to the userRoles.txt file.
-    
-    Returns:
-        List of roles (strings).
-    """
+        Reads user roles from a txt file exported by export_user_roles_to_txt.
+        
+        Args:
+            txt_file: Path to the userRoles.txt file.
+        
+        Returns:
+            List of roles (strings).
+        """
     roles = []
     with open(txt_file, "r", encoding="utf-8") as f:
         lines = f.readlines()
-        for line in lines[1:]:  # Skip the first line (header)
-            if line.startswith("Role: "):
-                role = line[len("Role: "):].strip()
-                roles.append(role)
+        i = 0
+        for line, index in lines:
+            role = line[len(f"Role_{i}: "):].strip()
+            roles.append(role)
 
     print(f"Imported {len(roles)} user roles from {txt_file}")
     return roles
+
+def devide_on_category_item(filtered_log, output_dir, item_categories, category_attribute="Item Category", case_id_attribute="concept:name"):
+    for group_name, category_values in item_categories.items():
+        # Use case filtering since category is a case attribute
+        group_categorized = pm4py.filter_trace_attribute_values(
+            filtered_log,
+            category_attribute, 
+            category_values, 
+            retain=True,
+            case_id_key=case_id_attribute
+        )
+        output_path = os.path.join(output_dir, f"{group_name}.xes")
+        pm4py.write_xes(group_categorized, output_path)

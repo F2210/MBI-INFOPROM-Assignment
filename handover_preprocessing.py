@@ -1,4 +1,3 @@
-
 import os
 import gc
 import logging
@@ -248,7 +247,7 @@ def assign_dominant_roles(roles, threshold: float = 0.3):
                 user_role_importance[user] = {}
             user_role_importance[user][role_idx] = importance
 
-    print(f"Extracted user-role importance mapping: {user_role_importance["user_359"]}")
+    print(f"Extracted user-role importance mapping: {user_role_importance['user_359']}")
 
     dominant_roles = []
     ambiguous_users = []

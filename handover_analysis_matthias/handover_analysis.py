@@ -22,7 +22,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Input/Output settings
-INPUT_DIR = './data/filtered/preprocessed_handover'
+INPUT_DIR = './data/filtered/preprocessed_handover/preprocessed_categorized_logs'
 OUTPUT_DIR = './data/analysis/handovers'
 
 # Item categories for analysis - only 2_way for testing
@@ -71,7 +71,7 @@ def analyze_handover_pairs(log, category_name):
             next_role = next_event.get("userRole", "UNKNOWN")
             
             # If roles are different, record the handover
-            if current_role != next_role:
+            if current_role != next_role or current_role == "unclear" or next_role != "unclear":
                 handover_pair = (current_role, next_role)
                 handover_counts[handover_pair] += 1
                 total_handovers += 1
@@ -112,7 +112,7 @@ def main():
         logger.info(f"\nProcessing category: {category_name}")
         
         # Find and load the XES file
-        xes_file = os.path.join(INPUT_DIR, f"processed_group_{category_name}.xes")
+        xes_file = os.path.join(INPUT_DIR, f"group_{category_name}.xes")
         logger.info(f"Looking for file: {xes_file}")
         
         if not os.path.exists(xes_file):

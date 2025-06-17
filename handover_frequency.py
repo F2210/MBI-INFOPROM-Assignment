@@ -5,11 +5,12 @@ from statistics import mean, median, mode
 import matplotlib.pyplot as plt
 from pm4py.objects.log.importer.xes import importer as xes_importer
 import glob
+from collections import defaultdict
 
 # Paths
 INPUT_FOLDER = 'data/filtered/preprocessed_handover/preprocessed_categorized_logs'
 OUTPUT_FOLDER = 'data/business_question_2'
-WHOLE_PROCESS = True
+WHOLE_PROCESS = False
 
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
@@ -47,6 +48,7 @@ def calculations_per_category():
     inside_handovers_per_category = {}
     duration_null_counts = {}
     duration_per_category = {}
+    number_of_events_per_category = {}
     one_activity_per_category = []
 
     for filename in os.listdir(INPUT_FOLDER):
@@ -58,8 +60,10 @@ def calculations_per_category():
             between_handovers_per_case = {}
             inside_handovers_per_case = {}
             durations_per_case = {}
+            number_of_events = []
             for trace in log:
                 case_id = trace.attributes.get('concept:name', None)
+                number_of_events.append(len(trace))
                 if len(trace) <= 1:
                     one_activity_in_trace.append(case_id)
                     continue
@@ -96,6 +100,8 @@ def calculations_per_category():
             duration_null_counts[process_type] = len(one_activity_in_trace)
             duration_per_category[process_type] = list(durations_per_case.values())
 
+            number_of_events_per_category[process_type] = number_of_events
+
             one_activity_per_category.append(f"found {len(one_activity_in_trace)} cases with only one activity, from the {len(log)} in {process_type}")
             print(f"found {len(one_activity_in_trace)} cases with only one activity, from the {len(log)} in {process_type}")
 
@@ -105,9 +111,28 @@ def calculations_per_category():
         for line in one_activity_per_category:
             f.write(line + '\n')
 
+    number_of_events_path = os.path.join(OUTPUT_FOLDER, 'events_average.txt')
+    with open(number_of_events_path, 'w') as f:
+        for process_type, activity_numbers in number_of_events_per_category.items():
+            line = f"{process_type}: {sum(activity_numbers) / len(activity_numbers) if activity_numbers else 0} average number of events"
+            f.write(line + '\n')
+            filtered_activity_numbers = [num for num in activity_numbers if num > 1]
+            second_line = f"{process_type}: {sum(filtered_activity_numbers) / len(filtered_activity_numbers) if activity_numbers else 0} average number of events (excluding cases with one activity)"
+            f.write(second_line + '\n')
+            median_val = median(activity_numbers) if activity_numbers else 0
+            mode_val = mode(activity_numbers) if activity_numbers else 0
+            f.write(f"{process_type}: {median_val} median number of events\n")
+            f.write(f"{process_type}: {mode_val} mode number of events\n")
+            filtered_median_val = median(filtered_activity_numbers) if filtered_activity_numbers else 0
+            filtered_mode_val = mode(filtered_activity_numbers) if filtered_activity_numbers else 0
+            f.write(f"{process_type}: {filtered_median_val} median number of events (excluding cases with one activity)\n")
+            f.write(f"{process_type}: {filtered_mode_val} mode number of events (excluding cases with one activity)\n")
+            f.write('\n')
+            
+
     return duration_per_category, inside_handovers_per_category, between_handovers_per_category, duration_null_counts, one_activity_per_category
 
-def calculate_statistics(between_handovers_per_category, inside_handovers_per_category, duration_per_category, duration_null_counts):
+def calculate_statistics(between_handovers_per_category, inside_handovers_per_category, duration_per_category, duration_null_counts=None):
     # Calculate mean, median, mode for each process type
     between_handover_stats = calculate_stats(between_handovers_per_category, 'between_handover_count')
     inside_handover_stats = calculate_stats(inside_handovers_per_category, 'inside_handover_count')
@@ -144,12 +169,16 @@ def calculate_statistics(between_handovers_per_category, inside_handovers_per_ca
     else:
         duration_df = pd.DataFrame(columns=['process_type', 'duration_mean', 'duration_median', 'duration_mode'])
 
-    null_counts_df = pd.DataFrame(list(duration_null_counts.items()), columns=['process_type', 'traces_with_one_activity'])
+    null_counts_df = None
+    if duration_null_counts is not None:
+        null_counts_df = pd.DataFrame(list(duration_null_counts.items()), columns=['process_type', 'traces_with_one_activity'])
 
     # Merge all on process_type
     merged = stats_df.merge(inside_df, on='process_type', how='outer') \
-                     .merge(duration_df, on='process_type', how='outer') \
-                     .merge(null_counts_df, on='process_type', how='outer')
+                     .merge(duration_df, on='process_type', how='outer')
+    
+    if null_counts_df is not None:
+        merged = merged.merge(null_counts_df, on='process_type', how='outer')
 
     merged.to_csv(os.path.join(OUTPUT_FOLDER, 'handover_and_duration_statistics.csv'), index=False)
     print(merged)
@@ -187,6 +216,41 @@ def calculate_statistics(between_handovers_per_category, inside_handovers_per_ca
         plt.savefig(plot_path)
         # plt.show()
 
+    create_line_graphs(between_handovers_per_category, duration_per_category, postfix='duration_vs_between_handovers_line')
+    create_line_graphs(inside_handovers_per_category, duration_per_category, postfix='duration_vs_inside_handovers_line')
+
+def create_line_graphs(handovers_per_category, duration_per_category, postfix=''): 
+    # Create line graphs: x = between handovers, y = case duration, for each process type
+    for process_type in duration_per_category:
+        durations = duration_per_category[process_type]
+        handovers = handovers_per_category[process_type]
+        # Aggregate durations by handovers (x value)
+        x_to_ys = defaultdict(list)
+        for x, y in zip(handovers, durations):
+            x_to_ys[x].append(y)
+        x_vals_average = sorted(x_to_ys.keys())
+        y_vals_average = [sum(x_to_ys[x]) / len(x_to_ys[x]) for x in x_vals_average]
+        # Ensure equal lengths
+        if len(durations) != len(handovers):
+            print(f"Skipping line graph for {process_type} due to unequal lengths.")
+            continue
+        # Sort by handovers for the "normal" line
+        sorted_pairs = sorted(zip(handovers, durations), key=lambda x: x[0])
+        x_vals, y_vals = zip(*sorted_pairs) if sorted_pairs else ([], [])
+        plt.figure(figsize=(8, 6))
+        # Plot the "normal" line (blue)
+        plt.plot(x_vals, y_vals, marker='o', linestyle='-', color='blue', label='Individual Cases')
+        # Plot the average line (red)
+        plt.plot(x_vals_average, y_vals_average, marker='o', linestyle='-', color='red', label='Average')
+        plt.xlabel('Handovers')
+        plt.ylabel('Case Duration (hours)')
+        plt.title(f'Case Duration vs. Handovers for {process_type}')
+        plt.legend()
+        plt.tight_layout()
+        line_path = os.path.join(OUTPUT_FOLDER, f'{process_type}_{postfix}.png')
+        plt.savefig(line_path)
+        plt.close()
+
 def calculate_stats(list_counts, information_name=None):
     stats = []
     for process_type, numbers in list_counts.items():
@@ -195,11 +259,14 @@ def calculate_stats(list_counts, information_name=None):
                 mode_val = mode(numbers)
             except:
                 mode_val = 'No unique mode'
+
+            percentage = percentage_with_median_value(numbers)
             stats.append({
                 'process_type': process_type,
                 'mean': mean(numbers),
                 'median': median(numbers),
-                'mode': mode_val
+                'mode': mode_val,
+                'percentage_of_cases_with_median': percentage
             })
             if(information_name):
                 # Create and save histogram for this process_type (integer bins)
@@ -318,6 +385,12 @@ def combine_calculations_per_category(between_handovers_per_category, inside_han
     # output_path = os.path.join(OUTPUT_FOLDER, 'combined_calculations_per_category.csv')
     # df.to_csv(output_path, index=False)
 
+def percentage_with_median_value(values):
+    med = median(values)
+    count_with_median = values.count(med)
+    total = len(values)
+    percentage = (count_with_median / total) * 100
+    return round(percentage, 2)
 
 if __name__ == "__main__":
     # Check if the required files exist in the OUTPUT_FOLDER
@@ -346,6 +419,8 @@ if __name__ == "__main__":
             df = pd.read_csv(file)
             between_handovers_per_category[process_type] = df['between_handover_count'].tolist()
             inside_handovers_per_category[process_type] = df['inside_handover_count'].tolist()
+
+        calculate_statistics(between_handovers_per_category, inside_handovers_per_category, duration_per_category)
     else:
         print("No preprocessed files found, starting calculations...")
         duration_per_category, inside_handovers_per_category, between_handovers_per_category, duration_null_counts, one_activity_per_category  = calculations_per_category()
@@ -353,7 +428,7 @@ if __name__ == "__main__":
 
     print("Handover frequency calculation completed.")
 
-    combine_calculations_per_category(between_handovers_per_category, inside_handovers_per_category, duration_per_category)
+    # combine_calculations_per_category(between_handovers_per_category, inside_handovers_per_category, duration_per_category)
 
-    calculate_worst_cases()
+    # calculate_worst_cases()
 

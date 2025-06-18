@@ -41,6 +41,7 @@ wheels/
 *.pkl
 *.pickle
 *.xes
+*.txt
 
 # Environments
 .env

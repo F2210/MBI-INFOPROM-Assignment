@@ -70,8 +70,12 @@ def analyze_handover_pairs(log, category_name):
             current_role = current_event.get("userRole", "UNKNOWN")
             next_role = next_event.get("userRole", "UNKNOWN")
             
-            # If roles are different, record the handover
-            if current_role != next_role or current_role == "unclear" or next_role != "unclear":
+            # Filter out handovers where either role is NONE, batch-related, or unclear
+            # Only record handover if roles are different and both are valid
+            if (current_role != next_role and 
+                current_role != "NONE" and next_role != "NONE" and
+                not current_role.startswith("batch_") and not next_role.startswith("batch_") and
+                current_role != "unclear" and next_role != "unclear"):
                 handover_pair = (current_role, next_role)
                 handover_counts[handover_pair] += 1
                 total_handovers += 1

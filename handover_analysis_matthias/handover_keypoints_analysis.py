@@ -94,7 +94,7 @@ def analyze_handover_keypoints(log, category_name):
             next_role = get_role(next_event.get("org:resource", "NONE"))
             
             # Record transition if there's a role handover
-            if current_role != next_role:
+            if current_role != next_role and current_role != "NONE" and next_role != "NONE" and current_role != "BATCH" and next_role != "BATCH":
                 transition = (current_activity, next_activity)
                 handover_transitions.append({
                     'from_activity': current_activity,

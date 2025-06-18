@@ -88,12 +88,12 @@ def analyze_activity_transitions(log, category_name):
                 'to_activity': next_activity,
                 'from_role': current_role,
                 'to_role': next_role,
-                'is_handover': current_role != next_role
+                'is_handover': current_role != next_role and current_role != "NONE" and next_role != "NONE" and current_role != "BATCH" and next_role != "BATCH"
             }
             transitions.append(transition)
             
             # If it's a handover, record detailed information
-            if current_role != next_role:
+            if current_role != next_role and current_role != "NONE" and next_role != "NONE" and current_role != "BATCH" and next_role != "BATCH":
                 key = f"{current_activity} → {next_activity}"
                 role_key = f"{current_role} → {next_role}"
                 handover_details[key]['total'] += 1

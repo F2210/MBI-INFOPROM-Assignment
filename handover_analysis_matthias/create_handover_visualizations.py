@@ -21,7 +21,7 @@ SECONDARY_COLOR = '#025162'
 COLOR_PALETTE = [PRIMARY_COLOR, SECONDARY_COLOR] + sns.color_palette("Blues_r", 6)
 
 # Read the data
-handovers_df = pd.read_csv('handover_analysis_matthias/data/analysis/handovers/handovers_all_categories.csv')
+handovers_df = pd.read_csv('data/analysis/handovers/handovers_all_categories_new.csv')
 
 # Read all keypoints data
 keypoints_data = {}

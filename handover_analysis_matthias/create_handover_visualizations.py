@@ -2,6 +2,11 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
+import os
+
+# Set output directory
+OUTPUT_DIR = 'handover_analysis_matthias/output/visualizations'
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Set style for scientific publication
 plt.style.use('seaborn-v0_8-whitegrid')
@@ -16,7 +21,7 @@ SECONDARY_COLOR = '#025162'
 COLOR_PALETTE = [PRIMARY_COLOR, SECONDARY_COLOR] + sns.color_palette("Blues_r", 6)
 
 # Read the data
-handovers_df = pd.read_csv('data/analysis/handovers/handovers_all_categories.csv')
+handovers_df = pd.read_csv('handover_analysis_matthias/data/analysis/handovers/handovers_all_categories.csv')
 
 # Read all keypoints data
 keypoints_data = {}
@@ -51,7 +56,7 @@ def create_top_handovers_plot():
     plt.ylabel('Process Category')
     plt.legend(title='From Role', bbox_to_anchor=(1.05, 1), loc='upper left')
     plt.tight_layout()
-    plt.savefig('handover_pairs_by_category.png', dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(OUTPUT_DIR, 'handover_pairs_by_category.png'), dpi=300, bbox_inches='tight')
     plt.close()
 
 # New function: Detailed bar plots for frequent pairs
@@ -94,7 +99,7 @@ def create_frequent_pairs_barplots():
         plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: format(int(x), ',')))
         
         plt.tight_layout()
-        plt.savefig(f'frequent_pairs_barplot_{category}.png', dpi=300, bbox_inches='tight')
+        plt.savefig(os.path.join(OUTPUT_DIR, f'frequent_pairs_barplot_{category}.png'), dpi=300, bbox_inches='tight')
         plt.close()
 
 # 2. Critical Handover Points Visualization for all variants
@@ -125,7 +130,7 @@ def create_keypoints_visualization():
         plt.ylabel('Percentage of Handovers')
         plt.xticks(range(len(labels)), labels, rotation=45, ha='right')
         plt.tight_layout()
-        plt.savefig(f'critical_handover_points_{category}.png', dpi=300, bbox_inches='tight')
+        plt.savefig(os.path.join(OUTPUT_DIR, f'critical_handover_points_{category}.png'), dpi=300, bbox_inches='tight')
         plt.close()
 
 # 3. Role Interaction Network for all variants
@@ -157,7 +162,7 @@ def create_role_interaction_heatmap():
         plt.xlabel('To Role')
         plt.ylabel('From Role')
         plt.tight_layout()
-        plt.savefig(f'role_interaction_heatmap_{category}.png', dpi=300, bbox_inches='tight')
+        plt.savefig(os.path.join(OUTPUT_DIR, f'role_interaction_heatmap_{category}.png'), dpi=300, bbox_inches='tight')
         plt.close()
 
 # 4. Process Flow Comparison
@@ -191,7 +196,7 @@ def create_process_flow():
         ax.set_yticks([])
     
     plt.tight_layout()
-    plt.savefig('process_flow_comparison.png', dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(OUTPUT_DIR, 'process_flow_comparison.png'), dpi=300, bbox_inches='tight')
     plt.close()
 
 if __name__ == "__main__":

@@ -25,15 +25,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Input/Output settings
-INPUT_DIR = './data/filtered/preprocessed_handover'
+INPUT_DIR = './data/filtered'
 OUTPUT_DIR = './data/analysis/handover_duration'
 
-# Item categories for analysis
+# Item categories for analysis - updated to match actual file names
 ITEM_CATEGORIES = {
-    "3_way_after": ["3-way match, invoice after GR"],
-    "3_way_before": ["3-way match, invoice before GR"],
-    "2_way": ["2-way match"],
-    "consignment": ["Consignment"]
+    "3_way_after": ["group_3_way_after.xes"],
+    "3_way_before": ["group_3_way_before.xes"],
+    "2_way": ["group_2_way.xes"],
+    "consignment": ["group_consignment.xes"]
 }
 
 def calculate_case_duration(case):
@@ -81,6 +81,14 @@ def analyze_handovers_and_duration(log, category_name):
         case_id = case.attributes["concept:name"]
         duration = calculate_case_duration(case)
         
+        # Debug logging for first few cases
+        if case_idx < 3:
+            logger.info(f"\nDebug - Case {case_id}:")
+            logger.info(f"Duration: {duration:.2f} hours")
+            logger.info("First few events:")
+            for i, event in enumerate(list(case)[:5]):
+                logger.info(f"Event {i}: Resource={event.get('org:resource', 'NONE')}, Role={event.get('userRole', 'UNKNOWN')}")
+        
         # Analyze handovers in the case
         user_handovers = []
         role_handovers = []
@@ -90,14 +98,20 @@ def analyze_handovers_and_duration(log, category_name):
             current_user = events[i].get("org:resource", "NONE")
             next_user = events[i + 1].get("org:resource", "NONE")
             
-            current_role = events[i].get("userRole", "UNKNOWN")
-            next_role = events[i + 1].get("userRole", "UNKNOWN")
+            # Get role from resource if not directly available
+            current_role = get_role(current_user)
+            next_role = get_role(next_user)
             
-            if current_user != next_user:
+            if current_user != next_user and current_user != "NONE" and next_user != "NONE":
                 user_handovers.append((current_user, next_user))
             
-            if current_role != next_role:
+            if current_role != next_role and current_role != "NONE" and next_role != "NONE":
                 role_handovers.append((current_role, next_role))
+        
+        # Debug logging for first few cases
+        if case_idx < 3:
+            logger.info(f"User handovers: {user_handovers}")
+            logger.info(f"Role handovers: {role_handovers}")
         
         # User-level analysis
         user_total_handovers = len(user_handovers)
@@ -199,14 +213,26 @@ def create_visualizations(df, category_name):
 def perform_statistical_analysis(df):
     """Perform statistical analysis on the handover-duration relationship."""
     # Calculate correlations
-    correlations = {
-        'total_handovers': stats.pearsonr(df['total_handovers'], df['duration']),
-        'unique_handovers': stats.pearsonr(df['unique_handovers'], df['duration'])
-    }
+    correlations = {}
+    
+    # Only calculate correlations if we have valid data
+    if len(df) > 1 and not df['total_handovers'].isna().any() and not df['duration'].isna().any():
+        correlations['total_handovers'] = stats.pearsonr(df['total_handovers'], df['duration'])
+    else:
+        correlations['total_handovers'] = (np.nan, np.nan)
+    
+    if len(df) > 1 and not df['unique_handovers'].isna().any() and not df['duration'].isna().any():
+        correlations['unique_handovers'] = stats.pearsonr(df['unique_handovers'], df['duration'])
+    else:
+        correlations['unique_handovers'] = (np.nan, np.nan)
     
     # Group cases by number of handovers and perform ANOVA
-    groups = [group['duration'].values for name, group in df.groupby('unique_handovers')]
-    f_stat, p_value = stats.f_oneway(*groups)
+    # Only perform ANOVA if we have enough groups with data
+    groups = [group['duration'].values for name, group in df.groupby('unique_handovers') if len(group) > 1]
+    if len(groups) >= 2:
+        f_stat, p_value = stats.f_oneway(*groups)
+    else:
+        f_stat, p_value = np.nan, np.nan
     
     return {
         'correlations': correlations,
@@ -223,11 +249,11 @@ def main():
     # Store results for all categories
     all_results = {}
     
-    for category_name, category_values in ITEM_CATEGORIES.items():
+    for category_name, category_files in ITEM_CATEGORIES.items():
         logger.info(f"\nProcessing category: {category_name}")
         
         # Find and load the XES file
-        xes_file = os.path.join(INPUT_DIR, f"processed_group_{category_name}.xes")
+        xes_file = os.path.join(INPUT_DIR, category_files[0])
         
         if not os.path.exists(xes_file):
             logger.warning(f"File not found: {xes_file}")
@@ -239,8 +265,30 @@ def main():
             log = xes_importer.apply(xes_file)
             logger.info(f"Successfully loaded log with {len(log)} cases")
             
+            # Print some debug information about the first case
+            if len(log) > 0:
+                first_case = log[0]
+                logger.info("\nDebug - First case attributes:")
+                for key, value in first_case.attributes.items():
+                    logger.info(f"{key}: {value}")
+                logger.info("\nDebug - First case events:")
+                for i, event in enumerate(list(first_case)[:5]):
+                    logger.info(f"Event {i}:")
+                    for key, value in event.items():
+                        logger.info(f"  {key}: {value}")
+            
             # Analyze handovers and duration
             user_level_df, role_level_df = analyze_handovers_and_duration(log, category_name)
+            
+            # Print summary of the dataframes
+            logger.info("\nUser-level DataFrame Summary:")
+            logger.info(user_level_df.describe())
+            logger.info("\nRole-level DataFrame Summary:")
+            logger.info(role_level_df.describe())
+            
+            # Create visualizations
+            create_visualizations(user_level_df, f"{category_name}_user_level")
+            create_visualizations(role_level_df, f"{category_name}_role_level")
             
             # Save results
             user_level_df.to_csv(os.path.join(OUTPUT_DIR, f"duration_{category_name}_user_level.csv"), index=False)
@@ -252,20 +300,28 @@ def main():
             # User-level summary
             logger.info("\nUser-level analysis:")
             logger.info(f"Total cases analyzed: {len(user_level_df)}")
-            logger.info(f"Average case duration: {user_level_df['duration'].mean():.2f} days")
+            logger.info(f"Average case duration: {user_level_df['duration'].mean():.2f} hours")
             logger.info(f"Average handovers per case: {user_level_df['total_handovers'].mean():.2f}")
             logger.info(f"Average unique handovers per case: {user_level_df['unique_handovers'].mean():.2f}")
             
             # Role-level summary
             logger.info("\nRole-level analysis:")
             logger.info(f"Total cases analyzed: {len(role_level_df)}")
-            logger.info(f"Average case duration: {role_level_df['duration'].mean():.2f} days")
+            logger.info(f"Average case duration: {role_level_df['duration'].mean():.2f} hours")
             logger.info(f"Average handovers per case: {role_level_df['total_handovers'].mean():.2f}")
             logger.info(f"Average unique handovers per case: {role_level_df['unique_handovers'].mean():.2f}")
             
+            # Perform statistical analysis
+            stats_results = perform_statistical_analysis(user_level_df)
+            logger.info("\nStatistical Analysis:")
+            logger.info(f"Correlation between total handovers and duration: {stats_results['correlations']['total_handovers'][0]:.3f} (p-value: {stats_results['correlations']['total_handovers'][1]:.3f})")
+            logger.info(f"Correlation between unique handovers and duration: {stats_results['correlations']['unique_handovers'][0]:.3f} (p-value: {stats_results['correlations']['unique_handovers'][1]:.3f})")
+            logger.info(f"ANOVA F-statistic: {stats_results['anova'][0]:.3f} (p-value: {stats_results['anova'][1]:.3f})")
+            
             all_results[category_name] = {
                 'user_level': user_level_df,
-                'role_level': role_level_df
+                'role_level': role_level_df,
+                'statistics': stats_results
             }
             
         except Exception as e:

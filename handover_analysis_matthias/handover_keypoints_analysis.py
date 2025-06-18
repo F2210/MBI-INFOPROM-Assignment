@@ -18,6 +18,7 @@ from pm4py.util import constants
 import scipy.stats as stats
 from scipy import stats
 from datetime import datetime
+import networkx as nx
 
 # Configure logging
 logging.basicConfig(
@@ -27,7 +28,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Input/Output settings
-INPUT_DIR = './data/filtered/preprocessed_handover'
+INPUT_DIR = './data/filtered'
 OUTPUT_DIR = './data/analysis/handover_keypoints'
 
 # Process categories
@@ -36,6 +37,14 @@ ITEM_CATEGORIES = {
     '3_way_before': 'Record Invoice Receipt (Before GR)',
     '2_way': '2-way match',
     'consignment': 'Consignment'
+}
+
+# File mapping
+FILE_MAPPING = {
+    '3_way_after': 'group_3_way_after.xes',
+    '3_way_before': 'group_3_way_before.xes',
+    '2_way': 'group_2_way.xes',
+    'consignment': 'group_consignment.xes'
 }
 
 def get_role(resource):
@@ -81,8 +90,8 @@ def analyze_handover_keypoints(log, category_name):
             # Get activities and roles
             current_activity = current_event["concept:name"]
             next_activity = next_event["concept:name"]
-            current_role = current_event.get("userRole", "UNKNOWN")
-            next_role = next_event.get("userRole", "UNKNOWN")
+            current_role = get_role(current_event.get("org:resource", "NONE"))
+            next_role = get_role(next_event.get("org:resource", "NONE"))
             
             # Record transition if there's a role handover
             if current_role != next_role:
@@ -102,6 +111,10 @@ def analyze_handover_keypoints(log, category_name):
     
     # Convert to DataFrame
     df = pd.DataFrame(handover_transitions)
+    
+    if len(df) == 0:
+        logger.warning(f"No handover transitions found for {category_name}")
+        return pd.DataFrame(), pd.DataFrame(), handover_details
     
     # Calculate frequencies and percentages
     total_handovers = len(df)
@@ -123,26 +136,26 @@ def create_visualizations(transition_counts, role_combinations, category_name):
     # Create output directory if it doesn't exist
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     
-    # 1. Bar plot of top 10 handover transitions
-    plt.figure(figsize=(12, 6))
-    top_10 = transition_counts.head(10)
+    # 1. Bar plot of top 5 handover transitions
+    plt.figure(figsize=(10, 5))
+    top_5 = transition_counts.head(5)
     
     # Create labels for x-axis
     labels = [f"{row['from_activity']}\n→\n{row['to_activity']}" 
-             for _, row in top_10.iterrows()]
+             for _, row in top_5.iterrows()]
     
-    plt.bar(range(len(top_10)), top_10['frequency'])
-    plt.xticks(range(len(top_10)), labels, rotation=45, ha='right')
-    plt.title(f'Top 10 Handover Activity Transitions ({category_name})')
+    plt.bar(range(len(top_5)), top_5['frequency'], color='#00838f')
+    plt.xticks(range(len(top_5)), labels, rotation=45, ha='right')
+    plt.title(f'Top 5 Handover Activity Transitions ({category_name})')
     plt.xlabel('Activity Transition')
     plt.ylabel('Frequency')
     
     # Adjust layout to prevent label cutoff
     plt.tight_layout()
-    plt.savefig(os.path.join(OUTPUT_DIR, f'{category_name}_top_transitions.png'))
+    plt.savefig(os.path.join(OUTPUT_DIR, f'{category_name}_top5_transitions.png'))
     plt.close()
     
-    return top_10
+    return top_5
 
 def calculate_case_duration(case):
     """Calculate the duration of a case in hours."""
@@ -261,6 +274,62 @@ def analyze_handover_duration_correlation(log, category_name):
         logger.error(f"Error in correlation analysis for {category_name}: {str(e)}")
         return None, None, len(df)
 
+def create_dfg(transition_counts, handover_details, category_name, threshold=5.0):
+    """Create and visualize a Directly-Follows Graph (DFG) for a given category."""
+    logger.info(f"Creating DFG for {category_name}")
+    
+    # Create a directed graph
+    G = nx.DiGraph()
+    
+    # Add nodes and edges
+    for _, row in transition_counts.iterrows():
+        from_activity = row['from_activity']
+        to_activity = row['to_activity']
+        frequency = row['frequency']
+        
+        # Add nodes if they don't exist
+        if from_activity not in G:
+            G.add_node(from_activity)
+        if to_activity not in G:
+            G.add_node(to_activity)
+        
+        # Add edge with frequency as weight
+        G.add_edge(from_activity, to_activity, weight=frequency)
+    
+    # Highlight handover transitions
+    for edge in G.edges():
+        from_activity, to_activity = edge
+        key = f"{from_activity} → {to_activity}"
+        if key in handover_details and handover_details[key]['total'] > 0:
+            G[from_activity][to_activity]['handover'] = True
+    
+    # Filter edges based on threshold
+    edges_to_remove = [(u, v) for u, v, d in G.edges(data=True) if d['weight'] < threshold]
+    G.remove_edges_from(edges_to_remove)
+    
+    # Visualize the graph
+    plt.figure(figsize=(12, 8))
+    pos = nx.spring_layout(G)
+    
+    # Draw nodes
+    nx.draw_networkx_nodes(G, pos, node_color='lightblue', node_size=500)
+    
+    # Draw edges
+    nx.draw_networkx_edges(G, pos, edge_color='gray', width=1.0)
+    
+    # Highlight handover edges
+    handover_edges = [(u, v) for u, v, d in G.edges(data=True) if d.get('handover', False)]
+    nx.draw_networkx_edges(G, pos, edgelist=handover_edges, edge_color='red', width=2.0)
+    
+    # Draw labels
+    nx.draw_networkx_labels(G, pos)
+    
+    plt.title(f'Directly-Follows Graph for {category_name}')
+    plt.axis('off')
+    plt.tight_layout()
+    plt.savefig(os.path.join(OUTPUT_DIR, f'{category_name}_dfg.png'))
+    plt.close()
+
 def main():
     """Main function to analyze handover keypoints across all categories."""
     logger.info("Starting handover keypoints analysis")
@@ -276,7 +345,7 @@ def main():
         logger.info(f"\nProcessing category: {category_name}")
         
         # Find and load the XES file
-        xes_file = os.path.join(INPUT_DIR, f"processed_group_{category_name}.xes")
+        xes_file = os.path.join(INPUT_DIR, FILE_MAPPING[category_name])
         logger.info(f"Looking for file: {xes_file}")
         
         if not os.path.exists(xes_file):
@@ -311,6 +380,12 @@ def main():
                 'handover_details': handover_details
             }
             
+            # Create visualizations
+            create_visualizations(transition_counts, role_combinations, category_name)
+            
+            # Create DFG
+            create_dfg(transition_counts, handover_details, category_name)
+            
         except Exception as e:
             logger.error(f"Error processing {category_name}: {str(e)}")
             import traceback
@@ -320,8 +395,12 @@ def main():
     logger.info("\nCorrelation Analysis Summary:")
     for result in correlation_results:
         logger.info(f"\n{result['category']}:")
-        logger.info(f"  Correlation coefficient: {result['correlation']:.3f}")
-        logger.info(f"  P-value: {result['p_value']:.2e}")
+        if result['correlation'] is not None and result['p_value'] is not None:
+            logger.info(f"  Correlation coefficient: {result['correlation']:.3f}")
+            logger.info(f"  P-value: {result['p_value']:.2e}")
+        else:
+            logger.info("  Correlation coefficient: N/A")
+            logger.info("  P-value: N/A")
         logger.info(f"  Number of cases: {result['n_cases']}")
     
     # Generate summary report for handover keypoints
